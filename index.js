@@ -369,12 +369,14 @@ function createDaemon() {
     await ensureHindsightConfig();
 
     state.logOffset = fileSize(daemonLogFile());
-    const env = env(apiKey, config);
+    // A local named `env` would shadow env() and throw "Cannot access 'env'
+    // before initialization" — the same footgun as the old `health` local.
+    const childEnv = env(apiKey, config);
     state.lastEnv = {
-      provider: env.HINDSIGHT_API_LLM_PROVIDER,
-      model: env.HINDSIGHT_API_LLM_MODEL,
+      provider: childEnv.HINDSIGHT_API_LLM_PROVIDER,
+      model: childEnv.HINDSIGHT_API_LLM_MODEL,
       installDir: config.installDir || null,
-      offline: env.UV_OFFLINE === '1',
+      offline: childEnv.UV_OFFLINE === '1',
     };
 
     try {
@@ -382,7 +384,7 @@ function createDaemon() {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
-        env,
+        env: childEnv,
       });
       child.on('error', () => {});
       child.unref();
