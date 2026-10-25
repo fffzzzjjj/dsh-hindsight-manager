@@ -1,0 +1,9 @@
+{
+  "meta": {
+    "title": "Local Memory Manager",
+    "description": "Manage the local Hindsight memory daemon from inside DSH: lifecycle, watchdog, cache location, and a page to browse and search this repository's memory bank."
+  },
+  "nav": "Memory",
+  "title": "Local Memory",
+  "subtitle": "The Hindsight daemon on this machine and this repository's memory bank"
+}

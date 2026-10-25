@@ -1,0 +1,56 @@
+{
+  "name": "dsh-hindsight-manager",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Manage the local Hindsight memory daemon from inside DeepSeek Harness: lifecycle, cache location, and a page to browse this repo's memory bank. · 在 DSH 里管理本地 Hindsight 记忆守护进程：启停、缓存位置、以及浏览本仓库记忆库的整页界面。",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "icon": "assets/icon.svg",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "hindsight",
+    "memory",
+    "agent-memory"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./assets/icon.svg"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "lib/watchdog.mjs",
+    "lib/hide-window.ps1",
+    "locale/*.json",
+    "assets/icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check lib/watchdog.mjs",
+    "test": "node test/client-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "meta": {
+    "title": "本地记忆管理器",
+    "description": "在 DSH 里管理本机 Hindsight 记忆守护进程：启停、看门狗、缓存目录，并浏览、搜索本仓库的记忆库。"
+  },
+  "nav": "本地记忆",
+  "title": "本地记忆",
+  "subtitle": "这台机器上的 Hindsight 守护进程，以及本仓库的记忆库"
+}

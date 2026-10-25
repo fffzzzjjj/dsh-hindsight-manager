@@ -1,0 +1,5 @@
+# dsh-hindsight-manager bundle patch: mounts the single row that owns the local
+# Hindsight daemon and serves the /hindsight-manager/api/* routes.
+- insert:
+    - id: hindsight-manager
+      name: 'dsh-hindsight-manager'
