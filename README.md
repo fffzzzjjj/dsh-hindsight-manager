@@ -37,11 +37,29 @@ Manage the local [Hindsight](https://hindsight.vectorize.io) memory daemon from 
 
 ## 安装
 
+从 GitHub 直接装：
+
+```powershell
+git clone https://github.com/fffzzzjjj/dsh-hindsight-manager.git
+dsh plugin --profile <你的 profile 名> add file:<克隆下来的目录>
+```
+
+或者用本地目录装：
+
 ```powershell
 dsh plugin --profile <你的 profile 名> add file:<本仓库绝对路径>
 ```
 
 然后重启 DSH。侧栏出现「本地记忆」，点进去就是管理页。
+
+> **改了代码必须重装。** pnpm 会把包**复制**进 profile，不是符号链接；而且要 `remove` + `add` 才会重新复制（版本没变的 `file:` 依赖，`add` 只会说 "Already up to date"）：
+>
+> ```powershell
+> dsh plugin --profile <profile> remove dsh-hindsight-manager
+> dsh plugin --profile <profile> add file:<目录>
+> ```
+>
+> 只改 `client.js` 的话，重装后按 F5 刷新页面就够；改 `index.js`（Host 半边）需要重启 DSH。
 
 > Desktop 版的 profile 归应用自己的插件管理器所有。如果 `dsh plugin` 报 profile 被占用，请在应用的「设置 → 插件」里安装。
 

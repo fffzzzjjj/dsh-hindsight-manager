@@ -4,6 +4,14 @@
   "private": false,
   "description": "Manage the local Hindsight memory daemon from inside DeepSeek Harness: lifecycle, cache location, and a page to browse this repo's memory bank. · 在 DSH 里管理本地 Hindsight 记忆守护进程：启停、缓存位置、以及浏览本仓库记忆库的整页界面。",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fffzzzjjj/dsh-hindsight-manager.git"
+  },
+  "homepage": "https://github.com/fffzzzjjj/dsh-hindsight-manager#readme",
+  "bugs": {
+    "url": "https://github.com/fffzzzjjj/dsh-hindsight-manager/issues"
+  },
   "type": "module",
   "main": "index.js",
   "icon": "assets/icon.svg",
