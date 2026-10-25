@@ -408,11 +408,13 @@ function createDaemon() {
   }
 
   async function status() {
-    const health = await health();
-    if (health) {
+    // The local must not be named `health`: it would shadow the `health()`
+    // function and throw "Cannot access 'health' before initialization".
+    const probe = await health();
+    if (probe) {
       state.starting = false;
       state.lastFailure = null;
-      return { running: true, status: 'running', health };
+      return { running: true, status: 'running', health: probe };
     }
     if (state.starting) return { running: false, status: 'starting' };
     if (state.lastFailure && Date.now() - state.lastFailure.at < 10 * 60 * 1000) {

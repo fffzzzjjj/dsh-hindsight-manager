@@ -88,17 +88,24 @@ Host 半边在 Harness 的 web server 上注册（`ctx.inject(['webServer'])` + 
 ## 开发
 
 ```powershell
-npm test      # 浏览器半边的无浏览器冒烟测试
-npm run check # 三个 Node 文件的语法检查
+npm test        # 两个冒烟测试（浏览器半边 + Host 半边）
+npm run check   # 三个 Node 文件的语法检查
 ```
 
-`npm test` 把 `client.js` 放进假的 `__ModuleLoader__` 环境执行，用 stub React 跑通 factory → `apply(ctx)` → 真的渲染一次页面，然后断言：
+**`test/client-smoke.mjs`** 把 `client.js` 放进假的 `__ModuleLoader__` 环境执行，用 stub React 跑通 factory → `apply(ctx)` → 真的渲染一次页面，然后断言：
 
 - 模块 id 与包名一致，`inject` 是 `slots,locale`
 - 注册了 `main` 与 `sidebar.panellist`，且两者的 key/id 相同（否则点侧栏那一行选不中面板）
 - 页面渲染出标题和**两个独立动作按钮**
 - **没有非按钮元素带 `onClick`** —— 状态区不可点，这是最初那个缺陷的回归测试
 - 所有 API 路径都在 `/hindsight-manager/api` 前缀下
+
+**`test/host-smoke.mjs`** 导入 `index.js`，用假 ctx 调 `apply()`，再把每个路由 handler 真的执行一遍（`DSH_HOME` 指向临时目录、`autoStart` 关掉，所以不碰真实 profile，也不拉起守护进程）。它抓的是「页面能加载、handler 一调就炸」这类错误 —— 这套测试第一次运行就抓到了提交前的这个 bug：
+
+```js
+async function status() {
+  const health = await health();   // 局部变量遮蔽同名函数 → TDZ 报错
+```
 
 ## 设计约束（如果你想改代码）
 
