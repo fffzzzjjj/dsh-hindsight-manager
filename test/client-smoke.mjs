@@ -291,6 +291,18 @@ if (typeof handles.CleanupPanel !== 'function') {
   }
 }
 
+// ── observation history panel renders its loading state ────────────────────
+if (typeof handles.ObservationHistory !== 'function') {
+  note('ObservationHistory is not exported for the test');
+} else {
+  try {
+    const tree = handles.ObservationHistory({ t: (key) => key, id: 'memory-1', onClose() {} });
+    if (!tree) note('ObservationHistory rendered nothing');
+  } catch (error) {
+    note(`ObservationHistory threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
+  }
+}
+
 // ── render once with the fallback translator ─────────────────────────────────
 function renderCase() {
   seen.length = 0;

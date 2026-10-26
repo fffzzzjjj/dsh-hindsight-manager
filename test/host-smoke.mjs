@@ -121,6 +121,7 @@ const expected = [
   '/hindsight-manager/api/documents',
   '/hindsight-manager/api/graph',
   '/hindsight-manager/api/entity',
+  '/hindsight-manager/api/memory/history',
   '/hindsight-manager/api/banks',
   '/hindsight-manager/api/health',
   '/hindsight-manager/api/cleanup',
@@ -357,6 +358,9 @@ const actionEmpty = await call('/hindsight-manager/api/memories/action', {
   body: JSON.stringify({ action: 'invalidate', ids: [], reason: 'dup' }),
 });
 if (actionEmpty && actionEmpty.status !== 400) note(`action empty ids status = ${actionEmpty.status}`);
+
+const historyNoId = await call('/hindsight-manager/api/memory/history');
+if (historyNoId && historyNoId.status !== 400) note(`history without id status = ${historyNoId.status}`);
 
 // ── search: an empty query is a client error, not a crash ────────────────────
 const searchEmpty = await call('/hindsight-manager/api/search', { method: 'POST', body: JSON.stringify({}) });

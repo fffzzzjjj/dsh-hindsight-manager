@@ -1506,6 +1506,42 @@ export function apply(ctx) {
         }
       },
 
+      '/hindsight-manager/api/memory/history': async (req, res) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+          const id = (url.searchParams.get('id') ?? '').trim();
+          if (id === '') {
+            json(res, 400, { ok: false, error: 'id is required' });
+            return;
+          }
+          const bank = await resolveBank();
+          const body = await fetchJson(
+            bankUrl(bank, `/memories/${encodeURIComponent(id)}/history`),
+            undefined,
+            GRAPH_TIMEOUT_MS,
+          );
+          const list = Array.isArray(body) ? body : (body?.items ?? body?.history ?? []);
+          json(res, 200, {
+            ok: true,
+            bank,
+            id,
+            entries: list.map((entry) => ({
+              changedAt: entry?.changed_at ?? null,
+              previousText: entry?.previous_text ?? '',
+              previousMentionedAt: entry?.previous_mentioned_at ?? null,
+              sources: (entry?.source_facts ?? []).map((fact) => ({
+                id: fact?.id ?? '',
+                text: fact?.text ?? '',
+                type: fact?.type ?? 'fact',
+                isNew: fact?.is_new === true,
+              })),
+            })),
+          });
+        } catch (error) {
+          json(res, error?.status === 404 ? 404 : 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
       '/hindsight-manager/api/entity': async (req, res) => {
         try {
           const url = new URL(req.url ?? '/', 'http://127.0.0.1');

@@ -175,6 +175,13 @@ window.__ModuleLoader__.load({
       graphLastSeen: '最近更新',
       graphViewAll: '查看全部 {n} 条',
       graphCollapse: '收起',
+      history: '历史',
+      historyTitle: '观察历史',
+      historyEmpty: '这条观察还没有版本记录。',
+      historyLoading: '加载中…',
+      historyChangedAt: '变更于',
+      historySources: '{n} 条来源',
+      historyClose: '关闭',
       graphNoMemories: '这个实体还没有关联记忆。',
       graphDetailFailed: '读取实体详情失败',
       graphLegendFocus: '焦点',
@@ -400,6 +407,13 @@ window.__ModuleLoader__.load({
       graphLastSeen: 'Last seen',
       graphViewAll: 'Show all {n}',
       graphCollapse: 'Collapse',
+      history: 'History',
+      historyTitle: 'Observation history',
+      historyEmpty: 'This observation has no recorded versions yet.',
+      historyLoading: 'Loading…',
+      historyChangedAt: 'changed',
+      historySources: '{n} sources',
+      historyClose: 'Close',
       graphNoMemories: 'No memories mention this entity yet.',
       graphDetailFailed: 'Could not load this entity',
       graphLegendFocus: 'focus',
@@ -2810,9 +2824,106 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * Versions of a derived observation: the API returns the text each update
+     * replaced, plus the facts that caused it.
+     */
+    function ObservationHistory(props) {
+      const t = typeof props?.t === 'function' ? props.t : fallbackT;
+      const id = props?.id ?? '';
+      const [state, setState] = useState({ loading: true, entries: [], error: null });
+
+      useEffect(() => {
+        let cancelled = false;
+        setState({ loading: true, entries: [], error: null });
+        const load = async () => {
+          try {
+            const res = await fetch(`${API}/memory/history?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+            const body = await res.json().catch(() => ({}));
+            if (cancelled) return;
+            if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+            setState({ loading: false, entries: Array.isArray(body.entries) ? body.entries : [], error: null });
+          } catch (error) {
+            if (!cancelled) setState({ loading: false, entries: [], error: error.message ?? String(error) });
+          }
+        };
+        load();
+        return () => {
+          cancelled = true;
+        };
+      }, [id]);
+
+      return h(
+        'div',
+        {
+          style: {
+            borderTop: `1px solid ${C.border}`,
+            paddingTop: 8,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          },
+        },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          h('span', { style: { fontSize: 11.5, fontWeight: 600, color: C.text } }, t('historyTitle')),
+          h('span', { style: { flex: 1 } }),
+          h(
+            'button',
+            {
+              type: 'button',
+              onClick: props?.onClose,
+              title: t('historyClose'),
+              style: {
+                appearance: 'none',
+                border: 'none',
+                background: 'transparent',
+                color: C.text3,
+                fontSize: 12,
+                cursor: 'pointer',
+                padding: 0,
+              },
+            },
+            '×',
+          ),
+        ),
+        state.loading
+          ? h('div', { style: { fontSize: 11, color: C.text3 } }, t('historyLoading'))
+          : state.error
+            ? h('div', { style: { fontSize: 11, color: C.err, wordBreak: 'break-word' } }, state.error)
+            : state.entries.length === 0
+              ? h('div', { style: { fontSize: 11, color: C.text3 } }, t('historyEmpty'))
+              : h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' } },
+                  ...state.entries.map((entry, index) =>
+                    h(
+                      'div',
+                      { key: index, style: { background: C.surface2, borderRadius: 6, padding: '6px 7px' } },
+                      h(
+                        'div',
+                        { style: { fontSize: 10, color: C.text3, display: 'flex', gap: 8, flexWrap: 'wrap' } },
+                        h('span', null, `${t('historyChangedAt')} ${shortDate(entry.changedAt)}`),
+                        entry.sources?.length
+                          ? h('span', null, fill(t('historySources'), { n: entry.sources.length }))
+                          : null,
+                      ),
+                      h(
+                        'div',
+                        { style: { fontSize: 11, color: C.text2, lineHeight: 1.45, marginTop: 3, wordBreak: 'break-word' } },
+                        entry.previousText || '—',
+                      ),
+                    ),
+                  ),
+                ),
+      );
+    }
+
     function GraphDrawer(props) {
       const t = typeof props?.t === 'function' ? props.t : fallbackT;
       const [expandedId, setExpandedId] = useState(null);
+      const [historyId, setHistoryId] = useState(null);
       const focusId = props?.focusId ?? null;
       const detail = props?.detail ?? null;
       const loading = props?.loading === true;
@@ -2922,6 +3033,30 @@ window.__ModuleLoader__.load({
                     h(Dot, { color: FACT_COLORS[memory.factType] ?? FACT_COLORS.fact, size: 5 }),
                     h('span', { style: { color: C.text2 } }, memory.factType),
                     h('span', { style: { marginLeft: 'auto' } }, shortDate(memory.date)),
+                    memory.factType === 'observation'
+                      ? h(
+                          'button',
+                          {
+                            type: 'button',
+                            onClick: (event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setHistoryId((current) => (current === memory.id ? null : memory.id));
+                            },
+                            style: {
+                              appearance: 'none',
+                              border: 'none',
+                              background: 'transparent',
+                              color: C.text3,
+                              fontSize: 10,
+                              cursor: 'pointer',
+                              padding: 0,
+                              textDecoration: 'underline dotted',
+                            },
+                          },
+                          t('history'),
+                        )
+                      : null,
                   ),
                   h(
                     'div',
@@ -2941,6 +3076,7 @@ window.__ModuleLoader__.load({
                 );
               }),
         ),
+        historyId ? h(ObservationHistory, { t, id: historyId, onClose: () => setHistoryId(null) }) : null,
         detail.total > memories.length || props?.showAll
           ? h(
               Button,
@@ -4102,7 +4238,7 @@ window.__ModuleLoader__.load({
       apply,
       // Render handles for the smoke test; the module loader only reads
       // name/inject/apply, so these are inert in the real host.
-      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout, CleanupPanel },
+      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout, CleanupPanel, ObservationHistory },
     };
   },
 });
