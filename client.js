@@ -70,6 +70,8 @@ window.__ModuleLoader__.load({
       bank: '记忆库',
       bankNone: '尚未创建',
       bankPending: '还没有记忆库，第一次对话结束后会自动创建。',
+      bankAuto: '自动（最近写入）',
+      bankSelectHint: '切换只影响这里查看的库；写记忆仍然按当前会话的工作区走。',
       provider: '抽取模型',
       cache: '缓存位置',
       systemDefault: '系统默认位置',
@@ -226,6 +228,8 @@ window.__ModuleLoader__.load({
       bank: 'Memory bank',
       bankNone: 'not created yet',
       bankPending: 'No bank yet — the first finished conversation creates it.',
+      bankAuto: 'Auto (most recent)',
+      bankSelectHint: 'Switching only changes what this page reads; writes still follow the session workspace.',
       provider: 'Extraction model',
       cache: 'Cache location',
       systemDefault: 'system default',
@@ -670,6 +674,10 @@ window.__ModuleLoader__.load({
       const [actionError, setActionError] = useState(null);
       const [documents, setDocuments] = useState(null);
       const [view, setView] = useState('overview');
+      const [banks, setBanks] = useState(null);
+      const [bankChoice, setBankChoice] = useState('');
+      const [bankBusy, setBankBusy] = useState(false);
+      const [bankMessage, setBankMessage] = useState(null);
       const [query, setQuery] = useState('');
       const [results, setResults] = useState(null);
       const [searching, setSearching] = useState(false);
@@ -712,6 +720,7 @@ window.__ModuleLoader__.load({
             setAutoStart(body.config.autoStart !== false);
             setShowFooterStatus(body.config.showFooterStatus !== false);
             setShowSidebarEntry(body.config.showSidebarEntry !== false);
+            setBankChoice(typeof body.config.bank === 'string' ? body.config.bank : '');
           }
         } catch (error) {
           if (alive.current) setLoadError(error.message ?? String(error));
@@ -724,6 +733,18 @@ window.__ModuleLoader__.load({
           const body = await res.json();
           if (!alive.current) return;
           if (res.ok && body.ok !== false) setSetup(body);
+        } catch {
+          // the status card already reports service trouble
+        }
+      }, []);
+
+      const loadBanks = useCallback(async () => {
+        try {
+          const res = await fetch(`${API}/banks`, { cache: 'no-store' });
+          const body = await res.json().catch(() => ({}));
+          if (!alive.current) return;
+          if (!res.ok || body.ok === false) return;
+          setBanks(Array.isArray(body.banks) ? body.banks : []);
         } catch {
           // the status card already reports service trouble
         }
@@ -744,6 +765,7 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         loadOverview();
         loadSetup();
+        loadBanks();
         const timer = setInterval(loadOverview, 4000);
         const setupTimer = setInterval(loadSetup, 5000);
         const tick = setInterval(() => {
@@ -755,6 +777,10 @@ window.__ModuleLoader__.load({
           clearInterval(tick);
         };
       }, [loadOverview, loadSetup]);
+
+      useEffect(() => {
+        if (data?.running) loadBanks();
+      }, [data?.running, loadBanks]);
 
       useEffect(() => {
         if (data?.running) loadDocuments();
@@ -819,6 +845,31 @@ window.__ModuleLoader__.load({
           if (alive.current) setBusy(null);
         }
       }, [loadSetup]);
+
+      const changeBank = useCallback(
+        async (value) => {
+          setBankBusy(true);
+          setBankMessage(null);
+          try {
+            const res = await fetch(`${API}/config`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              cache: 'no-store',
+              body: JSON.stringify({ bank: value }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+            if (alive.current) setBankChoice(value);
+            refreshAll();
+            loadBanks();
+          } catch (error) {
+            if (alive.current) setBankMessage(`${t('errorTitle')}: ${error.message ?? String(error)}`);
+          } finally {
+            if (alive.current) setBankBusy(false);
+          }
+        },
+        [refreshAll, loadBanks, t],
+      );
 
       const pickCacheDir = useCallback(async () => {
         if (pickDirectoryProp === null) {
@@ -1050,7 +1101,7 @@ window.__ModuleLoader__.load({
           ),
 
           view === 'graph'
-            ? h(GraphPanel, { t, running })
+            ? h(GraphPanel, { t, running, bank: data?.bank ?? null })
             : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 } },
               // quick start / setup
               h(
@@ -1211,7 +1262,41 @@ window.__ModuleLoader__.load({
                   ? h(
                       'div',
                       { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
-                      h(Row, { label: t('bank') }, h('code', { style: mono }, data.bank)),
+                      h(
+                        Row,
+                        { label: t('bank') },
+                        h(
+                          'select',
+                          {
+                            value: bankChoice,
+                            disabled: bankBusy || !data.running,
+                            onChange: (event) => changeBank(event.target.value),
+                            style: {
+                              maxWidth: 330,
+                              border: `1px solid ${C.border2}`,
+                              background: C.base,
+                              color: C.text,
+                              borderRadius: 7,
+                              padding: '3px 6px',
+                              fontSize: 11.5,
+                            },
+                          },
+                          h(
+                            'option',
+                            { value: '' },
+                            `${t('bankAuto')}${data.bank ? ` · ${String(data.bank).replace(/^coding-agent::/, '')}` : ''}`,
+                          ),
+                          ...(banks ?? []).map((bank) =>
+                            h(
+                              'option',
+                              { key: bank.id, value: bank.id },
+                              `${String(bank.id).replace(/^coding-agent::/, '')} · ${fmt(bank.facts)} ${t('factsShort')} · ${timeAgo(bank.lastWriteAt)}`,
+                            ),
+                          ),
+                        ),
+                      ),
+                      h('div', { style: { fontSize: 11, color: C.text3 } }, t('bankSelectHint')),
+                      bankMessage ? h('div', { style: { fontSize: 11.5, color: C.err } }, bankMessage) : null,
                       h(Row, { label: t('port') }, String(data.daemonPort)),
                       h(Row, { label: t('version') }, data.apiVersion ?? '—'),
                       data.env ? h(Row, { label: t('provider') }, `${data.env.provider} / ${data.env.model}`) : null,
@@ -2363,6 +2448,8 @@ window.__ModuleLoader__.load({
       const [playing, setPlaying] = useState(false);
       const [size, setSize] = useState({ width: 0, height: 0 });
       const [reloadToken, setReloadToken] = useState(0);
+      const bank = props?.bank ?? null;
+      const bankRef = useRef(null);
       const [detailToken, setDetailToken] = useState(0);
       const boxRef = useRef(null);
       const alive = useRef(true);
@@ -2405,8 +2492,20 @@ window.__ModuleLoader__.load({
           setLoading(false);
           return;
         }
+        if (bankRef.current !== bank) {
+          if (bankRef.current !== null) {
+            setGraph(null);
+            setFocusId(null);
+            setDetail(null);
+            setShowAll(false);
+            setGrowth(false);
+            setPlaying(false);
+            focusedOnce.current = false;
+          }
+          bankRef.current = bank;
+        }
         loadGraph();
-      }, [running, loadGraph, reloadToken]);
+      }, [running, bank, loadGraph, reloadToken]);
 
       useEffect(() => {
         const element = boxRef.current;

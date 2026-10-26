@@ -24,6 +24,7 @@ Manage the local [Hindsight](https://hindsight.vectorize.io) memory daemon from 
 | **退出随停** | 独立看门狗进程盯着 DSH 主进程，DSH 一退就停掉守护进程并释放内存 |
 | **状态只读** | 运行状态是**不可点击**的文字 + 颜色点。启动和停止是**两个独立按钮**，各自在不适用的状态下禁用 |
 | **记忆库概况** | 文档数、事实数、关联数、观察数 |
+| **选择记忆库** | 「记忆库」卡片里可以直接切换查看哪个库（自动/医药集团/DSH/…）；切换只影响查看，写记忆仍按会话工作区走 |
 | **记忆图谱** | 实体共现图：默认聚焦最高频实体、两跳径向；可切「全图」看整张网络；点节点在右侧列出它的记忆 |
 | **搜索记忆** | 语义检索（recall），结果就地展示 |
 | **文档列表** | 最近 20 篇，含字符数、事实数、写入距今 |
@@ -123,6 +124,7 @@ embedding 和 rerank 是**本地模型**，随引擎一起下载，不产生 API
 - `installDir`：非空时把 `UV_CACHE_DIR` 指向 `<installDir>/uv-cache`、`HF_HOME` 指向 `<installDir>/hf-models`。**只有在这些目录真的已经有内容时**才追加 `UV_OFFLINE=1` / `HF_HUB_OFFLINE=1` —— 在空目录上强行脱机会把「慢下载」变成「莫名失败」。
 - `autoStart`：`false` 就只靠页面上的按钮手动开。
 - `showFooterStatus`：左下角（头像上方）是否显示常驻运行状态条。
+- `bank`：`""` 表示自动（优先当前目录推导的库，否则最近写入的库）；填 `coding-agent::xxx` 则固定查看该库。只影响本面板读取，不改变 memory 集成写入的库。
 - `showSidebarEntry`：左上角任务栏是否显示「本地记忆」入口。关闭后入口消失，但主面板仍可从状态条打开；也可随时在「插件 → 已安装插件 → 本地记忆」里重新打开（那里有同一组开关和「打开面板」按钮）。
 
 模型密钥（快速开始第 2 步）写在 `~/.hindsight/profiles/coding-agent.env` 的 `HINDSIGHT_API_LLM_API_KEY`，和 Hindsight 引擎自己读的是同一份；同时把 `HINDSIGHT_API_PORT=9077` 固定下来（`hindsight-embed` 1.x 默认会随机分配端口，插件和记忆集成都需要固定的 9077）。
@@ -140,6 +142,7 @@ Host 半边在 Harness 的 web server 上注册（`ctx.inject(['webServer'])` + 
 | `POST /hindsight-manager/api/setup` | `{"action":"install-integration"}` 或 `{"action":"save-key","apiKey":"…"}` |
 | `POST /hindsight-manager/api/daemon` | `{"action":"start"\|"stop"}` |
 | `GET  /hindsight-manager/api/documents?limit=N` | 文档列表 |
+| `GET  /hindsight-manager/api/banks` | 可查看的记忆库列表 + 当前选中 |
 | `GET  /hindsight-manager/api/graph` | 实体共现图（`nodes`/`edges` 扁平化，带 `firstSeen` 与 `span` 时间跨度，5 秒缓存） |
 | `GET  /hindsight-manager/api/entity?id=…&limit=N` | 单个实体 + 提及它的记忆 |
 | `POST /hindsight-manager/api/search` | `{"query":"…","budget":"low"}` |

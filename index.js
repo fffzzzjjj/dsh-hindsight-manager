@@ -210,6 +210,9 @@ const DEFAULT_CONFIG = {
   autoStart: true,
   showFooterStatus: true,
   showSidebarEntry: true,
+  /** '' means "derive it"; anything else is an explicit bank to READ (writes
+   *  still follow the session's own workspace). */
+  bank: '',
 };
 
 async function loadConfig() {
@@ -221,6 +224,7 @@ async function loadConfig() {
       autoStart: parsed.autoStart !== false,
       showFooterStatus: parsed.showFooterStatus !== false,
       showSidebarEntry: parsed.showSidebarEntry !== false,
+      bank: typeof parsed.bank === 'string' ? parsed.bank.trim() : '',
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -885,7 +889,14 @@ export function apply(ctx) {
   daemon.ensureSupervisor();
 
   async function resolveBank({ force = false } = {}) {
-    if (!force && bankCache.name && Date.now() - bankCache.at < BANK_CACHE_MS) return bankCache.name;
+    const config = await loadConfig();
+    if (config.bank !== '') {
+      bankCache = { name: config.bank, at: Date.now(), forced: true };
+      return config.bank;
+    }
+    if (!force && bankCache.name && bankCache.forced !== true && Date.now() - bankCache.at < BANK_CACHE_MS) {
+      return bankCache.name;
+    }
     let name = null;
     try {
       const list = await fetchJson(`${daemonBase()}/v1/default/banks?limit=200`);
@@ -905,8 +916,21 @@ export function apply(ctx) {
       // daemon down
     }
     name = name ?? derivedBank();
-    bankCache = { name, at: Date.now() };
+    bankCache = { name, at: Date.now(), forced: false };
     return name;
+  }
+
+  /** The banks this plugin may read, newest write first. */
+  async function listBanks() {
+    const list = await fetchJson(`${daemonBase()}/v1/default/banks?limit=200`, undefined, QUICK_TIMEOUT_MS);
+    return (list?.banks ?? [])
+      .filter((entry) => typeof entry?.bank_id === 'string' && entry.bank_id.startsWith(BANK_PREFIX))
+      .map((entry) => ({
+        id: entry.bank_id,
+        facts: Number(entry.fact_count ?? 0),
+        lastWriteAt: entry.last_write_at ?? entry.last_document_at ?? null,
+      }))
+      .sort((left, right) => String(right.lastWriteAt ?? '').localeCompare(String(left.lastWriteAt ?? '')));
   }
 
   async function overview() {
@@ -1279,6 +1303,15 @@ export function apply(ctx) {
         }
       },
 
+      '/hindsight-manager/api/banks': async (_req, res) => {
+        try {
+          const [banks, config] = await Promise.all([listBanks(), loadConfig()]);
+          json(res, 200, { ok: true, banks, selected: config.bank, resolved: await resolveBank() });
+        } catch (error) {
+          json(res, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
       '/hindsight-manager/api/search': async (req, res) => {
         try {
           const raw = await readBody(req);
@@ -1327,6 +1360,17 @@ export function apply(ctx) {
                 return;
               }
               patch.autoStart = value;
+            } else if (key === 'bank') {
+              if (typeof value !== 'string') {
+                json(res, 400, { ok: false, error: 'bank must be a string' });
+                return;
+              }
+              const chosen = value.trim();
+              if (chosen !== '' && !chosen.startsWith(BANK_PREFIX)) {
+                json(res, 400, { ok: false, error: `bank must start with ${BANK_PREFIX}` });
+                return;
+              }
+              patch.bank = chosen;
             } else if (key === 'showFooterStatus' || key === 'showSidebarEntry') {
               if (typeof value !== 'boolean') {
                 json(res, 400, { ok: false, error: `${key} must be a boolean` });

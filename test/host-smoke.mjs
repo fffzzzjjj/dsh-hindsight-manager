@@ -121,6 +121,7 @@ const expected = [
   '/hindsight-manager/api/documents',
   '/hindsight-manager/api/graph',
   '/hindsight-manager/api/entity',
+  '/hindsight-manager/api/banks',
   '/hindsight-manager/api/search',
   '/hindsight-manager/api/config',
 ];
@@ -213,6 +214,36 @@ const configToggleBad = await call('/hindsight-manager/api/config', {
 });
 if (configToggleBad && configToggleBad.status !== 400) {
   note(`config toggle wrong type status = ${configToggleBad.status}`);
+}
+
+// ── banks: a list and a selected value, or a reported failure ────────────────
+const banksCall = await call('/hindsight-manager/api/banks');
+if (banksCall) {
+  const body = banksCall.json ?? {};
+  if (banksCall.status === 200) {
+    if (!Array.isArray(body.banks)) note('banks payload has no banks array');
+    if (typeof body.selected !== 'string') note('banks payload has no selected value');
+  } else if (banksCall.status === 500) {
+    if (body.ok !== false) note('banks failure body is not ok:false');
+  } else {
+    note(`banks status = ${banksCall.status}`);
+  }
+}
+
+const bankBad = await call('/hindsight-manager/api/config', {
+  method: 'POST',
+  body: JSON.stringify({ bank: 'other-prefix' }),
+});
+if (bankBad && bankBad.status !== 400) note(`config bank wrong prefix status = ${bankBad.status}`);
+
+const bankOk = await call('/hindsight-manager/api/config', {
+  method: 'POST',
+  body: JSON.stringify({ bank: 'coding-agent::DSH' }),
+});
+if (bankOk) {
+  if (bankOk.status !== 200) note(`config bank status = ${bankOk.status}`);
+  const written = JSON.parse(readFileSync(join(home, 'storages', 'dsh-hindsight-manager', 'config.json'), 'utf8'));
+  if (written.bank !== 'coding-agent::DSH') note(`config bank not persisted: ${JSON.stringify(written)}`);
 }
 
 // ── search: an empty query is a client error, not a crash ────────────────────
