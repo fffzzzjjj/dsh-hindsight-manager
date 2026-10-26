@@ -119,6 +119,8 @@ const expected = [
   '/hindsight-manager/api/setup',
   '/hindsight-manager/api/daemon',
   '/hindsight-manager/api/documents',
+  '/hindsight-manager/api/graph',
+  '/hindsight-manager/api/entity',
   '/hindsight-manager/api/search',
   '/hindsight-manager/api/config',
 ];
@@ -223,6 +225,25 @@ if (documents) {
   if (![200, 404, 500].includes(documents.status)) note(`documents status = ${documents.status}`);
   if (documents.json === null) note(`documents body is not JSON: ${documents.body}`);
 }
+
+// ── graph: a valid payload, or a reported failure — never a thrown handler ───
+const graph = await call('/hindsight-manager/api/graph');
+if (graph) {
+  const body = graph.json ?? {};
+  if (graph.status === 200) {
+    if (body.ok !== true) note('graph payload is not ok:true');
+    if (!Array.isArray(body.nodes)) note('graph payload has no nodes array');
+    if (!Array.isArray(body.edges)) note('graph payload has no edges array');
+  } else if (graph.status === 404 || graph.status === 500) {
+    if (body.ok !== false) note('graph failure body is not ok:false');
+    if (typeof body.error !== 'string') note('graph failure body has no error text');
+  } else {
+    note(`graph status = ${graph.status}`);
+  }
+}
+
+const entityNoId = await call('/hindsight-manager/api/entity');
+if (entityNoId && entityNoId.status !== 400) note(`entity without id status = ${entityNoId.status}`);
 
 // ── daemon: an unknown action is rejected without touching anything ──────────
 const daemonBad = await call('/hindsight-manager/api/daemon', {

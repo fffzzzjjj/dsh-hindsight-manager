@@ -81,6 +81,36 @@ window.__ModuleLoader__.load({
       facts: '事实',
       links: '关联',
       observations: '观察',
+      tabOverview: '概览',
+      tabGraph: '图谱',
+      graphTitle: '记忆图谱',
+      graphCounts: '{entities} 个实体 · {edges} 条关联',
+      graphHidden: '已按提及次数隐藏 {n} 个低频实体',
+      graphHint: '拖拽平移 · 滚轮缩放 · 点击节点聚焦',
+      graphBack: '返回全图',
+      graphFocus: '聚焦',
+      graphSearch: '搜索实体…',
+      graphMatches: '{n} 个匹配',
+      graphMin: '最少提及',
+      graphMinUnit: '次',
+      graphLoading: '正在加载…',
+      graphEmpty: '记忆库里还没有实体，对话结束后会自动抽取。',
+      graphLoadFailed: '图谱加载失败',
+      graphRetry: '重试',
+      graphRefresh: '刷新',
+      graphDetailHint: '点一个节点，这里会列出它关联的记忆。',
+      graphTopEntities: '高频实体',
+      graphMentions: '{n} 次提及',
+      graphMemories: '相关记忆',
+      graphFirstSeen: '首次出现',
+      graphLastSeen: '最近更新',
+      graphViewAll: '查看全部 {n} 条',
+      graphCollapse: '收起',
+      graphNoMemories: '这个实体还没有关联记忆。',
+      graphDetailFailed: '读取实体详情失败',
+      graphLegendFocus: '焦点',
+      graphLegendNear: '直接关联',
+      graphLegendFar: '两跳',
       recent: '最近的文档',
       recentEmpty: '还没有任何文档。对话结束后会自动写入，也可以让我手动存一篇。',
       recentHint: '按写入时间倒序，最多 20 篇',
@@ -199,6 +229,36 @@ window.__ModuleLoader__.load({
       facts: 'Facts',
       links: 'Links',
       observations: 'Observations',
+      tabOverview: 'Overview',
+      tabGraph: 'Graph',
+      graphTitle: 'Memory graph',
+      graphCounts: '{entities} entities · {edges} links',
+      graphHidden: '{n} low-mention entities hidden',
+      graphHint: 'Drag to pan · scroll to zoom · click a node to focus',
+      graphBack: 'All entities',
+      graphFocus: 'Focus',
+      graphSearch: 'Search entities…',
+      graphMatches: '{n} matches',
+      graphMin: 'Min mentions',
+      graphMinUnit: '',
+      graphLoading: 'Loading…',
+      graphEmpty: 'No entities yet — they are extracted after conversations end.',
+      graphLoadFailed: 'Could not load the graph',
+      graphRetry: 'Retry',
+      graphRefresh: 'Refresh',
+      graphDetailHint: 'Click a node to list the memories behind it.',
+      graphTopEntities: 'Top entities',
+      graphMentions: '{n} mentions',
+      graphMemories: 'Related memories',
+      graphFirstSeen: 'First seen',
+      graphLastSeen: 'Last seen',
+      graphViewAll: 'Show all {n}',
+      graphCollapse: 'Collapse',
+      graphNoMemories: 'No memories mention this entity yet.',
+      graphDetailFailed: 'Could not load this entity',
+      graphLegendFocus: 'focus',
+      graphLegendNear: 'direct',
+      graphLegendFar: 'two hops',
       recent: 'Recent documents',
       recentEmpty: 'No documents yet. Conversations are written after they end.',
       recentHint: 'Newest first, up to 20',
@@ -421,6 +481,29 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function ViewTab({ active, children, onClick }) {
+      return h(
+        'button',
+        {
+          type: 'button',
+          onClick,
+          style: {
+            appearance: 'none',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            padding: '7px 12px',
+            marginBottom: -1,
+            fontSize: 12.5,
+            fontWeight: active ? 600 : 400,
+            color: active ? C.text : C.text3,
+            borderBottom: `2px solid ${active ? C.btnFill : 'transparent'}`,
+          },
+        },
+        children,
+      );
+    }
+
     function Badge({ children, color = C.text2, done }) {
       return h(
         'span',
@@ -570,6 +653,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(null);
       const [actionError, setActionError] = useState(null);
       const [documents, setDocuments] = useState(null);
+      const [view, setView] = useState('overview');
       const [query, setQuery] = useState('');
       const [results, setResults] = useState(null);
       const [searching, setSearching] = useState(false);
@@ -942,419 +1026,1560 @@ window.__ModuleLoader__.load({
               )
             : null,
 
-          // quick start / setup
-          h(
-            Card,
-            null,
-            h(
-              SectionTitle,
-              {
-                hint: setupReady && !stepsOpen ? t('readyDetail') : t('quickStartHint'),
-                right:
-                  setupReady
-                    ? h(
-                        Button,
-                        { onClick: () => setStepsExpanded(!stepsExpanded) },
-                        stepsOpen ? t('hideSteps') : t('showSteps'),
-                      )
-                    : null,
-              },
-              setupReady && !stepsOpen ? `${t('quickStart')} · ${t('ready')}` : t('quickStart'),
-            ),
-            !setup
-              ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('stateUnknown'))
-              : setupReady && !stepsOpen
-                ? h(
-                    'div',
-                    { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12 } },
-                    h(Dot, { color: C.ok, glow: true, size: 9 }),
-                    h('span', { style: { color: C.ok, fontWeight: 600 } }, t('ready')),
-                    h('span', { style: { color: C.text2 } }, data?.bank ?? ''),
-                  )
-                : h(
-                    'div',
-                    null,
-                    h(
-                      Step,
-                      {
-                        index: 1,
-                        title: t('stepIntegration'),
-                        detail: integration?.installed
-                          ? `${t('installed')}${integration.version ? ` v${integration.version}` : ''}`
-                          : t('stepIntegrationDetail'),
-                        done: integration?.installed === true,
-                      },
-                      integration?.installed
-                        ? h(Badge, { done: true }, integration.enabled ? t('installed') : t('installedDisabled'))
-                        : h(
-                            Button,
-                            { onClick: installIntegration, busy: installing, primary: true },
-                            installing ? t('installing') : t('install'),
-                          ),
-                    ),
-                    installDone
-                      ? h('div', { style: { fontSize: 11.5, color: C.ok, paddingLeft: 30, paddingBottom: 6 } }, t('installDone'))
-                      : null,
-                    setup?.install?.error
-                      ? h(
-                          'div',
-                          { style: { fontSize: 11.5, color: C.err, paddingLeft: 30, paddingBottom: 6, wordBreak: 'break-word' } },
-                          `${t('installFailed')}: ${setup.install.error}`,
-                        )
-                      : null,
-
-                    h(
-                      Step,
-                      {
-                        index: 2,
-                        title: t('stepKey'),
-                        detail: apiKey?.configured
-                          ? `${t('keySource')}: ${
-                              apiKey.source === 'panel'
-                                ? t('keySourcePanel')
-                                : apiKey.source === 'harness'
-                                  ? t('keySourceHarness')
-                                  : t('keySourceEnv')
-                            }`
-                          : t('stepKeyDetail'),
-                        done: apiKey?.configured === true,
-                      },
-                      apiKey?.configured && !keyEditing
-                        ? h(
-                            'div',
-                            { style: { display: 'flex', gap: 8, alignItems: 'center' } },
-                            h(Badge, { done: true }, t('keySaved')),
-                            h(Button, { onClick: () => setKeyEditing(true) }, t('changeKey')),
-                          )
-                        : h(
-                            'div',
-                            { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' } },
-                            h('input', {
-                              type: 'password',
-                              value: keyInput,
-                              placeholder: t('keyPlaceholder'),
-                              onChange: (event) => setKeyInput(event.target.value),
-                              onKeyDown: (event) => {
-                                if (event.key === 'Enter') saveKey();
-                              },
-                              style: { ...inputStyle, width: 240, flex: 'none' },
-                              autoComplete: 'off',
-                              spellCheck: false,
-                            }),
-                            h(
-                              Button,
-                              { onClick: saveKey, busy: savingKey, disabled: keyInput.trim() === '', primary: true },
-                              savingKey ? t('savingKey') : t('saveKey'),
-                            ),
-                            keyEditing && apiKey?.configured
-                              ? h(Button, { onClick: () => setKeyEditing(false) }, t('cancel'))
-                              : null,
-                          ),
-                    ),
-                    h('div', { style: { fontSize: 11, color: C.text3, paddingLeft: 30, paddingBottom: 6, wordBreak: 'break-word' } }, t('keyHint')),
-                    keyMessage
-                      ? h('div', { style: { fontSize: 11.5, color: keyMessage.startsWith(t('errorTitle')) ? C.err : C.ok, paddingLeft: 30, paddingBottom: 6 } }, keyMessage)
-                      : null,
-
-                    h(
-                      Step,
-                      {
-                        index: 3,
-                        title: t('stepCache'),
-                        detail: setup?.config?.installDir || t('systemDefault'),
-                        done: Boolean(setup?.config?.installDir),
-                        optional: true,
-                      },
-                      h(Button, { onClick: goSettings }, t('goSettings')),
-                    ),
-
-                    h(
-                      Step,
-                      {
-                        index: 4,
-                        title: t('stepDaemon'),
-                        detail:
-                          status === 'running'
-                            ? `${t('stateRunning')} · ${data?.bank ?? ''}`
-                            : status === 'starting'
-                              ? t('startHint')
-                              : t('stepDaemonDetail'),
-                        done: running,
-                      },
-                      running
-                        ? h(Badge, { done: true }, t('stateRunning'))
-                        : h(
-                            Button,
-                            { onClick: () => runAction('start'), busy: busy === 'start', primary: !running },
-                            status === 'starting' ? t('stateStarting') : t('start'),
-                          ),
-                    ),
-                  ),
-          ),
-
-          // runtime status
-          h(
-            Card,
-            null,
-            h(SectionTitle, { hint: data?.running ? '' : t('downHint') }, t('bank')),
-            data
-              ? h(
-                  'div',
-                  { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
-                  h(Row, { label: t('bank') }, h('code', { style: mono }, data.bank)),
-                  h(Row, { label: t('port') }, String(data.daemonPort)),
-                  h(Row, { label: t('version') }, data.apiVersion ?? '—'),
-                  data.env ? h(Row, { label: t('provider') }, `${data.env.provider} / ${data.env.model}`) : null,
-                  h(Row, { label: t('cache') }, data.config?.installDir || t('systemDefault')),
-                  h(
-                    Row,
-                    { label: t('network') },
-                    proxy?.bypassProxy ? t('direct') : t('normalNetwork'),
-                  ),
-                )
-              : h('div', { style: { fontSize: 12, color: C.text3 } }, t('stateUnknown')),
-            data?.bankExists === false && data?.running
-              ? h('div', { style: { marginTop: 10, fontSize: 11.5, color: C.text3 } }, t('bankPending'))
-              : null,
-            loadError
-              ? h(
-                  'div',
-                  { style: { marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: C.err } },
-                  `${t('errorTitle')}: ${loadError}`,
-                  h(Button, { onClick: refreshAll }, t('retry')),
-                )
-              : null,
-          ),
-
-          // stats
-          h(
-            Card,
-            null,
-            h(SectionTitle, null, t('stats')),
-            h(
-              'div',
-              { style: { display: 'flex', gap: 28, flexWrap: 'wrap' } },
-              h(Stat, { label: t('documents'), value: fmt(stats?.total_documents) }),
-              h(Stat, { label: t('facts'), value: fmt(stats?.total_nodes) }),
-              h(Stat, { label: t('links'), value: fmt(stats?.total_links) }),
-              h(Stat, { label: t('observations'), value: fmt(stats?.total_observations) }),
-            ),
-            data?.bankExists === false && data?.running
-              ? h('div', { style: { marginTop: 10, fontSize: 11.5, color: C.text3 } }, t('bankPending'))
-              : null,
-          ),
-
-          // search
-          h(
-            Card,
-            null,
-            h(SectionTitle, { hint: t('searchHint') }, t('search')),
-            h(
-              'div',
-              { style: { display: 'flex', gap: 8 } },
-              h('input', {
-                type: 'search',
-                value: query,
-                placeholder: t('searchPlaceholder'),
-                disabled: !running,
-                onChange: (event) => setQuery(event.target.value),
-                onKeyDown: (event) => {
-                  if (event.key === 'Enter') submitSearch();
-                },
-                style: inputStyle,
-              }),
-              h(
-                Button,
-                { onClick: submitSearch, disabled: !running || query.trim() === '', busy: searching },
-                searching ? t('searching') : t('searchButton'),
-              ),
-            ),
-            results === null
-              ? null
-              : Array.isArray(results) && results.length === 0
-                ? h('div', { style: { marginTop: 12, fontSize: 12, color: C.text3 } }, t('searchEmpty'))
-                : results?.error
-                  ? h('div', { style: { marginTop: 12, fontSize: 12, color: C.err } }, results.error)
-                  : h(
-                      'div',
-                      { style: { marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
-                      h('div', { style: { fontSize: 11, color: C.text3 } }, `${results.length} ${t('results')}`),
-                      ...results.slice(0, 12).map((item, index) =>
-                        h(
-                          'div',
-                          {
-                            key: index,
-                            style: { padding: '8px 10px', borderRadius: 8, background: C.surface2, fontSize: 12, color: C.text },
-                          },
-                          item.text ?? JSON.stringify(item),
-                        ),
-                      ),
-                    ),
-          ),
-
-          // documents
-          h(
-            Card,
-            null,
-            h(SectionTitle, { hint: t('recentHint') }, t('recent')),
-            documents === null
-              ? h('div', { style: { fontSize: 12, color: C.text3 } }, '—')
-              : documents.length === 0
-                ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('recentEmpty'))
-                : h(
-                    'div',
-                    { style: { display: 'flex', flexDirection: 'column', gap: 1 } },
-                    ...documents.map((doc, index) =>
-                      h(
-                        'div',
-                        {
-                          key: doc.id ?? index,
-                          style: {
-                            display: 'flex',
-                            alignItems: 'baseline',
-                            gap: 12,
-                            padding: '8px 0',
-                            borderTop: index === 0 ? 'none' : `1px solid ${C.border}`,
-                            fontSize: 12,
-                          },
-                        },
-                        h(
-                          'code',
-                          {
-                            title: doc.id,
-                            style: {
-                              flex: 1,
-                              minWidth: 0,
-                              fontFamily: 'ui-monospace, monospace',
-                              fontSize: 11,
-                              color: C.text2,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            },
-                          },
-                          String(doc.id ?? '').slice(0, 48),
-                        ),
-                        h('span', { style: { flex: 'none', color: C.text3 } }, `${fmt(doc.text_length)} ${t('chars')}`),
-                        h('span', { style: { flex: 'none', color: C.text3 } }, `${fmt(doc.memory_unit_count)} ${t('factsShort')}`),
-                        h('span', { style: { flex: 'none', color: C.text3, minWidth: 32, textAlign: 'right' } }, timeAgo(doc.created_at)),
-                      ),
-                    ),
-                  ),
-          ),
-
-          // settings
           h(
             'div',
-            { ref: settingsRef },
-            h(
-              Card,
-              null,
-              h(SectionTitle, { hint: t('settingsHint') }, t('settings')),
-              h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
-                h(
-                  'div',
-                  { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-                  h('span', { style: { fontSize: 12, color: C.text } }, t('installDir')),
-                  h(
-                    'div',
-                    { style: { display: 'flex', gap: 8, alignItems: 'center' } },
-                    h('input', {
-                      type: 'text',
-                      value: installDir,
-                      placeholder: 'e.g. D:\\hindsight',
-                      onChange: (event) => setInstallDir(event.target.value),
-                      style: inputStyle,
-                    }),
-                    h(
-                      Button,
-                      { onClick: pickCacheDir, busy: picking, disabled: !pickDirectoryProp },
-                      picking ? t('picking') : t('browse'),
-                    ),
-                  ),
-                  h('span', { style: { fontSize: 11, color: C.text3 } }, t('installDirHint')),
-                ),
-                h(
-                  'label',
-                  { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
-                  h('input', {
-                    type: 'checkbox',
-                    checked: autoStart,
-                    onChange: (event) => setAutoStart(event.target.checked),
-                    style: { width: 14, height: 14, cursor: 'pointer' },
-                  }),
-                  h('span', null, t('autoStart')),
-                  h('span', { style: { color: C.text3, fontSize: 11 } }, t('autoStartHint')),
-                ),
-                h(
-                  'label',
-                  { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
-                  h('input', {
-                    type: 'checkbox',
-                    checked: showFooterStatus,
-                    onChange: (event) => setShowFooterStatus(event.target.checked),
-                    style: { width: 14, height: 14, cursor: 'pointer' },
-                  }),
-                  h('span', null, t('footerStatus')),
-                  h('span', { style: { color: C.text3, fontSize: 11 } }, t('footerStatusHint')),
-                ),
-                h(
-                  'label',
-                  { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
-                  h('input', {
-                    type: 'checkbox',
-                    checked: showSidebarEntry,
-                    onChange: (event) => setShowSidebarEntry(event.target.checked),
-                    style: { width: 14, height: 14, cursor: 'pointer' },
-                  }),
-                  h('span', null, t('sidebarEntry')),
-                  h('span', { style: { color: C.text3, fontSize: 11 } }, t('sidebarEntryHint')),
-                ),
-                h(
-                  'div',
-                  { style: { display: 'flex', alignItems: 'center', gap: 12 } },
-                  h(Button, { onClick: saveSettings, primary: true, busy: savingConfig }, savingConfig ? t('saving') : t('save')),
-                  configMessage
-                    ? h('span', { style: { fontSize: 11, color: configMessage.startsWith(t('errorTitle')) ? C.err : C.ok } }, configMessage)
-                    : h('span', { style: { fontSize: 11, color: C.text3 } }, t('configNote')),
-                ),
-              ),
-            ),
+            { style: { display: 'flex', gap: 2, borderBottom: `1px solid ${C.border}`, marginTop: 2 } },
+            h(ViewTab, { active: view === 'overview', onClick: () => setView('overview') }, t('tabOverview')),
+            h(ViewTab, { active: view === 'graph', onClick: () => setView('graph') }, t('tabGraph')),
           ),
 
-          // diagnostics
-          setup
-            ? h(
+          view === 'graph'
+            ? h(GraphPanel, { t, running })
+            : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 } },
+              // quick start / setup
+              h(
                 Card,
                 null,
-                h(SectionTitle, null, t('diagnostics')),
                 h(
-                  'div',
-                  { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
-                  h(Row, { label: t('profileLabel') }, setup.profile ?? '—'),
-                  h(
-                    Row,
-                    { label: t('integrationLabel') },
-                    setup.integration?.installed
-                      ? `${t('installed')}${setup.integration.version ? ` v${setup.integration.version}` : ''}`
-                      : t('stateStopped'),
-                  ),
-                  h(Row, { label: t('modelsLabel') }, setup.models?.embeddings && setup.models?.reranker ? t('modelsOk') : t('modelsMissing')),
-                  h(Row, { label: t('logPath') }, h('code', { style: mono }, `~/.hindsight/profiles/${'coding-agent'}.log`)),
-                  h(Row, { label: t('envPath') }, h('code', { style: mono }, '~/.hindsight/profiles/coding-agent.env')),
-                  h(Row, { label: t('dataDir') }, h('code', { style: mono }, setup.config?.installDir || '~/.hindsight')),
-                  proxy?.systemProxy
+                  SectionTitle,
+                  {
+                    hint: setupReady && !stepsOpen ? t('readyDetail') : t('quickStartHint'),
+                    right:
+                      setupReady
+                        ? h(
+                            Button,
+                            { onClick: () => setStepsExpanded(!stepsExpanded) },
+                            stepsOpen ? t('hideSteps') : t('showSteps'),
+                          )
+                        : null,
+                  },
+                  setupReady && !stepsOpen ? `${t('quickStart')} · ${t('ready')}` : t('quickStart'),
+                ),
+                !setup
+                  ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('stateUnknown'))
+                  : setupReady && !stepsOpen
                     ? h(
                         'div',
-                        { style: { fontSize: 11.5, color: proxy.bypassProxy ? C.warn : C.text3, marginTop: 2 } },
-                        (proxy.bypassProxy ? t('proxyNote') : t('proxyOk')).replace('{proxy}', proxy.systemProxy),
+                        { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 12 } },
+                        h(Dot, { color: C.ok, glow: true, size: 9 }),
+                        h('span', { style: { color: C.ok, fontWeight: 600 } }, t('ready')),
+                        h('span', { style: { color: C.text2 } }, data?.bank ?? ''),
                       )
-                    : null,
+                    : h(
+                        'div',
+                        null,
+                        h(
+                          Step,
+                          {
+                            index: 1,
+                            title: t('stepIntegration'),
+                            detail: integration?.installed
+                              ? `${t('installed')}${integration.version ? ` v${integration.version}` : ''}`
+                              : t('stepIntegrationDetail'),
+                            done: integration?.installed === true,
+                          },
+                          integration?.installed
+                            ? h(Badge, { done: true }, integration.enabled ? t('installed') : t('installedDisabled'))
+                            : h(
+                                Button,
+                                { onClick: installIntegration, busy: installing, primary: true },
+                                installing ? t('installing') : t('install'),
+                              ),
+                        ),
+                        installDone
+                          ? h('div', { style: { fontSize: 11.5, color: C.ok, paddingLeft: 30, paddingBottom: 6 } }, t('installDone'))
+                          : null,
+                        setup?.install?.error
+                          ? h(
+                              'div',
+                              { style: { fontSize: 11.5, color: C.err, paddingLeft: 30, paddingBottom: 6, wordBreak: 'break-word' } },
+                              `${t('installFailed')}: ${setup.install.error}`,
+                            )
+                          : null,
+
+                        h(
+                          Step,
+                          {
+                            index: 2,
+                            title: t('stepKey'),
+                            detail: apiKey?.configured
+                              ? `${t('keySource')}: ${
+                                  apiKey.source === 'panel'
+                                    ? t('keySourcePanel')
+                                    : apiKey.source === 'harness'
+                                      ? t('keySourceHarness')
+                                      : t('keySourceEnv')
+                                }`
+                              : t('stepKeyDetail'),
+                            done: apiKey?.configured === true,
+                          },
+                          apiKey?.configured && !keyEditing
+                            ? h(
+                                'div',
+                                { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+                                h(Badge, { done: true }, t('keySaved')),
+                                h(Button, { onClick: () => setKeyEditing(true) }, t('changeKey')),
+                              )
+                            : h(
+                                'div',
+                                { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+                                h('input', {
+                                  type: 'password',
+                                  value: keyInput,
+                                  placeholder: t('keyPlaceholder'),
+                                  onChange: (event) => setKeyInput(event.target.value),
+                                  onKeyDown: (event) => {
+                                    if (event.key === 'Enter') saveKey();
+                                  },
+                                  style: { ...inputStyle, width: 240, flex: 'none' },
+                                  autoComplete: 'off',
+                                  spellCheck: false,
+                                }),
+                                h(
+                                  Button,
+                                  { onClick: saveKey, busy: savingKey, disabled: keyInput.trim() === '', primary: true },
+                                  savingKey ? t('savingKey') : t('saveKey'),
+                                ),
+                                keyEditing && apiKey?.configured
+                                  ? h(Button, { onClick: () => setKeyEditing(false) }, t('cancel'))
+                                  : null,
+                              ),
+                        ),
+                        h('div', { style: { fontSize: 11, color: C.text3, paddingLeft: 30, paddingBottom: 6, wordBreak: 'break-word' } }, t('keyHint')),
+                        keyMessage
+                          ? h('div', { style: { fontSize: 11.5, color: keyMessage.startsWith(t('errorTitle')) ? C.err : C.ok, paddingLeft: 30, paddingBottom: 6 } }, keyMessage)
+                          : null,
+
+                        h(
+                          Step,
+                          {
+                            index: 3,
+                            title: t('stepCache'),
+                            detail: setup?.config?.installDir || t('systemDefault'),
+                            done: Boolean(setup?.config?.installDir),
+                            optional: true,
+                          },
+                          h(Button, { onClick: goSettings }, t('goSettings')),
+                        ),
+
+                        h(
+                          Step,
+                          {
+                            index: 4,
+                            title: t('stepDaemon'),
+                            detail:
+                              status === 'running'
+                                ? `${t('stateRunning')} · ${data?.bank ?? ''}`
+                                : status === 'starting'
+                                  ? t('startHint')
+                                  : t('stepDaemonDetail'),
+                            done: running,
+                          },
+                          running
+                            ? h(Badge, { done: true }, t('stateRunning'))
+                            : h(
+                                Button,
+                                { onClick: () => runAction('start'), busy: busy === 'start', primary: !running },
+                                status === 'starting' ? t('stateStarting') : t('start'),
+                              ),
+                        ),
+                      ),
+              ),
+
+              // runtime status
+              h(
+                Card,
+                null,
+                h(SectionTitle, { hint: data?.running ? '' : t('downHint') }, t('bank')),
+                data
+                  ? h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
+                      h(Row, { label: t('bank') }, h('code', { style: mono }, data.bank)),
+                      h(Row, { label: t('port') }, String(data.daemonPort)),
+                      h(Row, { label: t('version') }, data.apiVersion ?? '—'),
+                      data.env ? h(Row, { label: t('provider') }, `${data.env.provider} / ${data.env.model}`) : null,
+                      h(Row, { label: t('cache') }, data.config?.installDir || t('systemDefault')),
+                      h(
+                        Row,
+                        { label: t('network') },
+                        proxy?.bypassProxy ? t('direct') : t('normalNetwork'),
+                      ),
+                    )
+                  : h('div', { style: { fontSize: 12, color: C.text3 } }, t('stateUnknown')),
+                data?.bankExists === false && data?.running
+                  ? h('div', { style: { marginTop: 10, fontSize: 11.5, color: C.text3 } }, t('bankPending'))
+                  : null,
+                loadError
+                  ? h(
+                      'div',
+                      { style: { marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: C.err } },
+                      `${t('errorTitle')}: ${loadError}`,
+                      h(Button, { onClick: refreshAll }, t('retry')),
+                    )
+                  : null,
+              ),
+
+              // stats
+              h(
+                Card,
+                null,
+                h(SectionTitle, null, t('stats')),
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: 28, flexWrap: 'wrap' } },
+                  h(Stat, { label: t('documents'), value: fmt(stats?.total_documents) }),
+                  h(Stat, { label: t('facts'), value: fmt(stats?.total_nodes) }),
+                  h(Stat, { label: t('links'), value: fmt(stats?.total_links) }),
+                  h(Stat, { label: t('observations'), value: fmt(stats?.total_observations) }),
                 ),
+                data?.bankExists === false && data?.running
+                  ? h('div', { style: { marginTop: 10, fontSize: 11.5, color: C.text3 } }, t('bankPending'))
+                  : null,
+              ),
+
+              // search
+              h(
+                Card,
+                null,
+                h(SectionTitle, { hint: t('searchHint') }, t('search')),
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: 8 } },
+                  h('input', {
+                    type: 'search',
+                    value: query,
+                    placeholder: t('searchPlaceholder'),
+                    disabled: !running,
+                    onChange: (event) => setQuery(event.target.value),
+                    onKeyDown: (event) => {
+                      if (event.key === 'Enter') submitSearch();
+                    },
+                    style: inputStyle,
+                  }),
+                  h(
+                    Button,
+                    { onClick: submitSearch, disabled: !running || query.trim() === '', busy: searching },
+                    searching ? t('searching') : t('searchButton'),
+                  ),
+                ),
+                results === null
+                  ? null
+                  : Array.isArray(results) && results.length === 0
+                    ? h('div', { style: { marginTop: 12, fontSize: 12, color: C.text3 } }, t('searchEmpty'))
+                    : results?.error
+                      ? h('div', { style: { marginTop: 12, fontSize: 12, color: C.err } }, results.error)
+                      : h(
+                          'div',
+                          { style: { marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
+                          h('div', { style: { fontSize: 11, color: C.text3 } }, `${results.length} ${t('results')}`),
+                          ...results.slice(0, 12).map((item, index) =>
+                            h(
+                              'div',
+                              {
+                                key: index,
+                                style: { padding: '8px 10px', borderRadius: 8, background: C.surface2, fontSize: 12, color: C.text },
+                              },
+                              item.text ?? JSON.stringify(item),
+                            ),
+                          ),
+                        ),
+              ),
+
+              // documents
+              h(
+                Card,
+                null,
+                h(SectionTitle, { hint: t('recentHint') }, t('recent')),
+                documents === null
+                  ? h('div', { style: { fontSize: 12, color: C.text3 } }, '—')
+                  : documents.length === 0
+                    ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('recentEmpty'))
+                    : h(
+                        'div',
+                        { style: { display: 'flex', flexDirection: 'column', gap: 1 } },
+                        ...documents.map((doc, index) =>
+                          h(
+                            'div',
+                            {
+                              key: doc.id ?? index,
+                              style: {
+                                display: 'flex',
+                                alignItems: 'baseline',
+                                gap: 12,
+                                padding: '8px 0',
+                                borderTop: index === 0 ? 'none' : `1px solid ${C.border}`,
+                                fontSize: 12,
+                              },
+                            },
+                            h(
+                              'code',
+                              {
+                                title: doc.id,
+                                style: {
+                                  flex: 1,
+                                  minWidth: 0,
+                                  fontFamily: 'ui-monospace, monospace',
+                                  fontSize: 11,
+                                  color: C.text2,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                },
+                              },
+                              String(doc.id ?? '').slice(0, 48),
+                            ),
+                            h('span', { style: { flex: 'none', color: C.text3 } }, `${fmt(doc.text_length)} ${t('chars')}`),
+                            h('span', { style: { flex: 'none', color: C.text3 } }, `${fmt(doc.memory_unit_count)} ${t('factsShort')}`),
+                            h('span', { style: { flex: 'none', color: C.text3, minWidth: 32, textAlign: 'right' } }, timeAgo(doc.created_at)),
+                          ),
+                        ),
+                      ),
+              ),
+
+              // settings
+              h(
+                'div',
+                { ref: settingsRef },
+                h(
+                  Card,
+                  null,
+                  h(SectionTitle, { hint: t('settingsHint') }, t('settings')),
+                  h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+                    h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                      h('span', { style: { fontSize: 12, color: C.text } }, t('installDir')),
+                      h(
+                        'div',
+                        { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+                        h('input', {
+                          type: 'text',
+                          value: installDir,
+                          placeholder: 'e.g. D:\\hindsight',
+                          onChange: (event) => setInstallDir(event.target.value),
+                          style: inputStyle,
+                        }),
+                        h(
+                          Button,
+                          { onClick: pickCacheDir, busy: picking, disabled: !pickDirectoryProp },
+                          picking ? t('picking') : t('browse'),
+                        ),
+                      ),
+                      h('span', { style: { fontSize: 11, color: C.text3 } }, t('installDirHint')),
+                    ),
+                    h(
+                      'label',
+                      { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
+                      h('input', {
+                        type: 'checkbox',
+                        checked: autoStart,
+                        onChange: (event) => setAutoStart(event.target.checked),
+                        style: { width: 14, height: 14, cursor: 'pointer' },
+                      }),
+                      h('span', null, t('autoStart')),
+                      h('span', { style: { color: C.text3, fontSize: 11 } }, t('autoStartHint')),
+                    ),
+                    h(
+                      'label',
+                      { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
+                      h('input', {
+                        type: 'checkbox',
+                        checked: showFooterStatus,
+                        onChange: (event) => setShowFooterStatus(event.target.checked),
+                        style: { width: 14, height: 14, cursor: 'pointer' },
+                      }),
+                      h('span', null, t('footerStatus')),
+                      h('span', { style: { color: C.text3, fontSize: 11 } }, t('footerStatusHint')),
+                    ),
+                    h(
+                      'label',
+                      { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
+                      h('input', {
+                        type: 'checkbox',
+                        checked: showSidebarEntry,
+                        onChange: (event) => setShowSidebarEntry(event.target.checked),
+                        style: { width: 14, height: 14, cursor: 'pointer' },
+                      }),
+                      h('span', null, t('sidebarEntry')),
+                      h('span', { style: { color: C.text3, fontSize: 11 } }, t('sidebarEntryHint')),
+                    ),
+                    h(
+                      'div',
+                      { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+                      h(Button, { onClick: saveSettings, primary: true, busy: savingConfig }, savingConfig ? t('saving') : t('save')),
+                      configMessage
+                        ? h('span', { style: { fontSize: 11, color: configMessage.startsWith(t('errorTitle')) ? C.err : C.ok } }, configMessage)
+                        : h('span', { style: { fontSize: 11, color: C.text3 } }, t('configNote')),
+                    ),
+                  ),
+                ),
+              ),
+
+              // diagnostics
+              setup
+                ? h(
+                    Card,
+                    null,
+                    h(SectionTitle, null, t('diagnostics')),
+                    h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
+                      h(Row, { label: t('profileLabel') }, setup.profile ?? '—'),
+                      h(
+                        Row,
+                        { label: t('integrationLabel') },
+                        setup.integration?.installed
+                          ? `${t('installed')}${setup.integration.version ? ` v${setup.integration.version}` : ''}`
+                          : t('stateStopped'),
+                      ),
+                      h(Row, { label: t('modelsLabel') }, setup.models?.embeddings && setup.models?.reranker ? t('modelsOk') : t('modelsMissing')),
+                      h(Row, { label: t('logPath') }, h('code', { style: mono }, `~/.hindsight/profiles/${'coding-agent'}.log`)),
+                      h(Row, { label: t('envPath') }, h('code', { style: mono }, '~/.hindsight/profiles/coding-agent.env')),
+                      h(Row, { label: t('dataDir') }, h('code', { style: mono }, setup.config?.installDir || '~/.hindsight')),
+                      proxy?.systemProxy
+                        ? h(
+                            'div',
+                            { style: { fontSize: 11.5, color: proxy.bypassProxy ? C.warn : C.text3, marginTop: 2 } },
+                            (proxy.bypassProxy ? t('proxyNote') : t('proxyOk')).replace('{proxy}', proxy.systemProxy),
+                          )
+                        : null,
+                    ),
+                  )
+                : null,
+            ),
+        ),
+      );
+    }
+
+    // ── graph view ───────────────────────────────────────────────────────────
+    // The bank's entity co-occurrence graph, drawn as SVG without a chart
+    // library: one radial layout for a focused entity, one force layout for the
+    // whole bank. Layouts are cached by stamp so panning and hovering never
+    // recompute them.
+
+    const GRAPH_PALETTE = ['#5b8def', '#43b38a', '#c99a3f', '#9b7ede', '#3fa7b8', '#c96b7a'];
+    const FACT_COLORS = { world: '#9b7ede', experience: '#43b38a', observation: '#c99a3f', fact: '#5b8def' };
+    const graphLayouts = new Map();
+
+    const fill = (template, values) =>
+      String(template).replace(/\{(\w+)\}/g, (match, key) => (values[key] === undefined ? match : String(values[key])));
+    const shortDate = (iso) => (typeof iso === 'string' && iso.length >= 10 ? iso.slice(5, 10) : '—');
+
+    function buildAdjacency(edges) {
+      const map = new Map();
+      for (const edge of edges) {
+        if (!map.has(edge.source)) map.set(edge.source, []);
+        if (!map.has(edge.target)) map.set(edge.target, []);
+        map.get(edge.source).push({ id: edge.target, weight: edge.weight ?? 1 });
+        map.get(edge.target).push({ id: edge.source, weight: edge.weight ?? 1 });
+      }
+      return map;
+    }
+
+    function nodeRadius(mentions, maxMentions) {
+      const ratio = maxMentions > 0 ? Math.min(1, Math.max(0, (mentions ?? 1) / maxMentions)) : 0;
+      return 4 + 9 * Math.sqrt(ratio);
+    }
+
+    function textWidth(text, size) {
+      let width = 0;
+      for (const character of String(text)) {
+        width += /[\u2e80-\u9fff\uff00-\uffef]/.test(character) ? size : size * 0.56;
+      }
+      return width;
+    }
+
+    /** Clip a label to the space left in the canvas, so narrow windows never cut text. */
+    function fitText(text, maxWidth, size) {
+      if (maxWidth <= 24) return null;
+      if (textWidth(text, size) <= maxWidth) return text;
+      let out = '';
+      for (const character of String(text)) {
+        if (textWidth(out + character + '…', size) > maxWidth) break;
+        out += character;
+      }
+      return out === '' ? null : out + '…';
+    }
+
+    function makeRandom(seed) {
+      let state = seed >>> 0;
+      return () => {
+        state = (state * 1664525 + 1013904223) >>> 0;
+        return state / 4294967296;
+      };
+    }
+
+    function heatColor(ratio) {
+      const from = [77, 124, 255];
+      const to = [240, 163, 67];
+      const channel = (index) => Math.round(from[index] + (to[index] - from[index]) * Math.max(0, Math.min(1, ratio)));
+      return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+    }
+
+    /**
+     * Focus mode: the selected entity in the middle, everything it co-occurs
+     * with on the first ring, and their neighbours on the second. Radial by
+     * construction, so it never collapses into a hairball.
+     */
+    function focusLayout(nodes, edges, focusId, width, height) {
+      const byId = new Map(nodes.map((node) => [node.id, node]));
+      const hub = byId.get(focusId);
+      if (!hub) return null;
+      const adjacency = buildAdjacency(edges);
+      const maxMentions = Math.max(1, ...nodes.map((node) => node.mentions ?? 1));
+      const neighbours = [...(adjacency.get(hub.id) ?? [])]
+        .filter((entry) => byId.has(entry.id))
+        .sort((left, right) => right.weight - left.weight)
+        .slice(0, 16);
+      const ring1Ids = new Set(neighbours.map((entry) => entry.id));
+
+      const outerGroups = new Map();
+      for (const entry of neighbours) {
+        const group = [];
+        for (const other of adjacency.get(entry.id) ?? []) {
+          if (other.id === hub.id || ring1Ids.has(other.id) || !byId.has(other.id)) continue;
+          group.push(other);
+        }
+        group.sort((left, right) => right.weight - left.weight);
+        outerGroups.set(entry.id, group.slice(0, 6));
+      }
+
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const base = Math.min(width, height);
+      const radius1 = Math.max(82, Math.min(170, base * 0.33));
+      const radius2 = Math.max(radius1 + 42, Math.min(240, base * 0.46));
+
+      const positions = new Map();
+      const ring = new Map();
+      positions.set(hub.id, { x: centerX, y: centerY });
+      ring.set(hub.id, 0);
+
+      const ring1 = neighbours.map((entry, position) => {
+        const angle = (position / Math.max(1, neighbours.length)) * Math.PI * 2 - Math.PI / 2;
+        positions.set(entry.id, {
+          x: centerX + Math.cos(angle) * radius1,
+          y: centerY + Math.sin(angle) * radius1,
+        });
+        ring.set(entry.id, 1);
+        return { id: entry.id, angle };
+      });
+
+      const outer = [];
+      const placedOuter = new Set();
+      for (const parent of ring1) {
+        const group = (outerGroups.get(parent.id) ?? []).filter((entry) => !placedOuter.has(entry.id));
+        group.forEach((entry, position) => {
+          placedOuter.add(entry.id);
+          const offset = group.length <= 1 ? 0 : (position - (group.length - 1) / 2) * 0.24;
+          const angle = parent.angle + offset;
+          positions.set(entry.id, {
+            x: centerX + Math.cos(angle) * radius2,
+            y: centerY + Math.sin(angle) * radius2,
+          });
+          ring.set(entry.id, 2);
+          outer.push({ id: entry.id, parent: parent.id, weight: entry.weight });
+        });
+      }
+
+      const visible = neighbours.map((entry) => ({
+        source: hub.id,
+        target: entry.id,
+        weight: entry.weight,
+        kind: 'hub',
+      }));
+      for (const entry of outer) {
+        visible.push({ source: entry.parent, target: entry.id, weight: entry.weight, kind: 'outer' });
+      }
+      for (const edge of edges) {
+        if (!ring1Ids.has(edge.source) || !ring1Ids.has(edge.target)) continue;
+        visible.push({ source: edge.source, target: edge.target, weight: edge.weight, kind: 'peer' });
+      }
+
+      const labelIds = new Set([hub.id, ...ring1Ids]);
+
+      return {
+        mode: 'focus',
+        focusId: hub.id,
+        positions,
+        ring,
+        labelIds,
+        visible,
+        adjacency,
+        hidden: 0,
+        maxMentions,
+      };
+    }
+
+    /**
+     * Whole-bank mode: every entity above the mention threshold, a deterministic
+     * force layout, lighter edges, and colours from communities — or, when the
+     * bank is one big hub cluster, a mention heat scale so the map still reads.
+     */
+    function fullLayout(nodes, edges, width, height, minCount, stamp) {
+      const cacheKey = `full|${stamp}|${width}x${height}|${minCount}`;
+      const cached = graphLayouts.get(cacheKey);
+      if (cached) return cached;
+
+      const kept = [...nodes]
+        .filter((node) => (node.mentions ?? 1) >= minCount)
+        .sort((left, right) => (right.mentions ?? 1) - (left.mentions ?? 1))
+        .slice(0, 160);
+      const keptIds = new Set(kept.map((node) => node.id));
+      const pairs = new Map();
+      for (const edge of edges) {
+        if (!keptIds.has(edge.source) || !keptIds.has(edge.target)) continue;
+        const pairKey = edge.source < edge.target ? `${edge.source}|${edge.target}` : `${edge.target}|${edge.source}`;
+        const previous = pairs.get(pairKey);
+        if (!previous || (edge.weight ?? 1) > previous.weight) {
+          pairs.set(pairKey, { source: edge.source, target: edge.target, weight: edge.weight ?? 1, kind: 'peer' });
+        }
+      }
+      const visible = [...pairs.values()].sort((left, right) => right.weight - left.weight).slice(0, 1400);
+      const adjacency = buildAdjacency(visible);
+
+      const count = kept.length;
+      const maxMentions = Math.max(1, ...nodes.map((node) => node.mentions ?? 1));
+      const index = new Map(kept.map((node, position) => [node.id, position]));
+      const random = makeRandom((count * 7919 + minCount * 104729 + 17) >>> 0);
+      const pad = 36;
+      const innerWidth = Math.max(140, width - pad * 2);
+      const innerHeight = Math.max(140, height - pad * 2);
+      const points = kept.map((_, position) => {
+        const angle = (position / Math.max(1, count)) * Math.PI * 2 + random() * 0.6;
+        const radius = Math.min(innerWidth, innerHeight) * (0.18 + random() * 0.2);
+        return { x: width / 2 + Math.cos(angle) * radius, y: height / 2 + Math.sin(angle) * radius };
+      });
+
+      const k = 1.3 * Math.sqrt((innerWidth * innerHeight) / Math.max(1, count));
+      const linkDistance = Math.max(46, Math.min(110, k * 1.15));
+      const iterations = count > 150 ? 300 : 460;
+      for (let iteration = 0; iteration < iterations; iteration++) {
+        const temperature = 34 * Math.pow(1 - iteration / iterations, 1.6) + 0.5;
+        const displacement = kept.map(() => ({ x: 0, y: 0 }));
+        for (let left = 0; left < count; left++) {
+          for (let right = left + 1; right < count; right++) {
+            let dx = points[left].x - points[right].x;
+            let dy = points[left].y - points[right].y;
+            let distance2 = dx * dx + dy * dy;
+            if (distance2 < 1) {
+              dx = random() - 0.5;
+              dy = random() - 0.5;
+              distance2 = dx * dx + dy * dy || 1;
+            }
+            const distance = Math.sqrt(distance2);
+            const force = (0.9 * k * k) / distance;
+            const ux = dx / distance;
+            const uy = dy / distance;
+            displacement[left].x += ux * force;
+            displacement[left].y += uy * force;
+            displacement[right].x -= ux * force;
+            displacement[right].y -= uy * force;
+          }
+        }
+        for (const edge of visible) {
+          const from = index.get(edge.source);
+          const to = index.get(edge.target);
+          if (from === undefined || to === undefined) continue;
+          const dx = points[from].x - points[to].x;
+          const dy = points[from].y - points[to].y;
+          const distance = Math.max(Math.hypot(dx, dy), 0.5);
+          const force = (distance - linkDistance) * 0.052;
+          const ux = (dx / distance) * force;
+          const uy = (dy / distance) * force;
+          displacement[from].x -= ux;
+          displacement[from].y -= uy;
+          displacement[to].x += ux;
+          displacement[to].y += uy;
+        }
+        for (let position = 0; position < count; position++) {
+          displacement[position].x -= (points[position].x - width / 2) * 0.055;
+          displacement[position].y -= (points[position].y - height / 2) * 0.055;
+          const length = Math.max(Math.hypot(displacement[position].x, displacement[position].y), 0.01);
+          const step = Math.min(length, temperature);
+          points[position].x += (displacement[position].x / length) * step;
+          points[position].y += (displacement[position].y / length) * step;
+        }
+      }
+
+      const xs = points.map((point) => point.x);
+      const ys = points.map((point) => point.y);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const spanX = Math.max(maxX - minX, 1);
+      const spanY = Math.max(maxY - minY, 1);
+      const scale = Math.min(innerWidth / spanX, innerHeight / spanY, 1.5);
+      const offsetX = pad + (innerWidth - spanX * scale) / 2;
+      const offsetY = pad + (innerHeight - spanY * scale) / 2;
+
+      const positions = new Map();
+      kept.forEach((node, position) => {
+        positions.set(node.id, {
+          x: offsetX + (points[position].x - minX) * scale,
+          y: offsetY + (points[position].y - minY) * scale,
+        });
+      });
+
+      let labels = kept.map((_, position) => position);
+      if (count > 1) {
+        for (let round = 0; round < 6; round++) {
+          const next = labels.slice();
+          kept.forEach((node, position) => {
+            const tally = new Map();
+            for (const entry of adjacency.get(node.id) ?? []) {
+              const other = index.get(entry.id);
+              if (other === undefined) continue;
+              tally.set(labels[other], (tally.get(labels[other]) ?? 0) + entry.weight);
+            }
+            let best = labels[position];
+            let bestScore = -1;
+            for (const [label, score] of tally) {
+              if (score > bestScore) {
+                best = label;
+                bestScore = score;
+              }
+            }
+            next[position] = best;
+          });
+          labels = next;
+        }
+      }
+      const clusterSizes = new Map();
+      for (const label of labels) clusterSizes.set(label, (clusterSizes.get(label) ?? 0) + 1);
+      const largestShare = Math.max(...clusterSizes.values()) / Math.max(1, count);
+      const colors = new Map();
+      if (clusterSizes.size <= 1 || largestShare > 0.55) {
+        for (const node of kept) colors.set(node.id, heatColor(Math.min(1, (node.mentions ?? 1) / maxMentions)));
+      } else {
+        const ranking = [...clusterSizes.entries()].sort((left, right) => right[1] - left[1]);
+        const paletteIndex = new Map(ranking.map(([label], position) => [label, position]));
+        kept.forEach((node, position) => {
+          colors.set(node.id, GRAPH_PALETTE[paletteIndex.get(labels[position]) % GRAPH_PALETTE.length]);
+        });
+      }
+
+      const labelIds = new Set();
+      const boxes = [];
+      const candidates = [...kept].sort((left, right) => (right.mentions ?? 1) - (left.mentions ?? 1));
+      for (const node of candidates) {
+        if (labelIds.size >= 8) break;
+        const point = positions.get(node.id);
+        if (!point) continue;
+        const radius = nodeRadius(node.mentions, maxMentions);
+        const width_ = textWidth(node.label, 10);
+        const box = {
+          left: point.x - width_ / 2 - 1,
+          right: point.x + width_ / 2 + 1,
+          top: point.y + radius + 2,
+          bottom: point.y + radius + 13,
+        };
+        if (boxes.some((other) => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) {
+          continue;
+        }
+        boxes.push(box);
+        labelIds.add(node.id);
+      }
+
+      const result = {
+        mode: 'full',
+        focusId: null,
+        positions,
+        ring: null,
+        labelIds,
+        visible,
+        adjacency,
+        hidden: nodes.length - kept.length,
+        maxMentions,
+        colors,
+      };
+      graphLayouts.set(cacheKey, result);
+      if (graphLayouts.size > 8) graphLayouts.delete(graphLayouts.keys().next().value);
+      return result;
+    }
+
+    function computeLayout(options) {
+      const { nodes, edges, focusId, width, height, minCount, stamp } = options;
+      if (!Array.isArray(nodes) || nodes.length === 0) return null;
+      if (focusId) {
+        const focused = focusLayout(nodes, edges, focusId, width, height);
+        if (focused) return focused;
+      }
+      return fullLayout(nodes, edges, width, height, minCount ?? 1, stamp ?? 0);
+    }
+
+    function GraphCanvas(props) {
+      const t = typeof props?.t === 'function' ? props.t : fallbackT;
+      const width = Math.max(220, Math.round(props?.width ?? 620));
+      const height = Math.max(180, Math.round(props?.height ?? 420));
+      const nodes = Array.isArray(props?.nodes) ? props.nodes : [];
+      const edges = Array.isArray(props?.edges) ? props.edges : [];
+      const focusId = props?.focusId ?? null;
+      const search = String(props?.search ?? '').trim().toLowerCase();
+      const [zoom, setZoom] = useState(1);
+      const [pan, setPan] = useState({ x: 0, y: 0 });
+      const [hoverId, setHoverId] = useState(null);
+      const viewRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
+      const svgRef = useRef(null);
+      const dragRef = useRef(null);
+      const layoutRef = useRef({ key: null, layout: null });
+
+      useEffect(() => {
+        viewRef.current = { zoom, pan };
+      }, [zoom, pan]);
+
+      useEffect(() => {
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+      }, [focusId]);
+
+      // React attaches wheel listeners passively, so the native one is used here
+      // only to allow preventDefault while zooming the canvas.
+      useEffect(() => {
+        const svg = svgRef.current;
+        if (!svg || typeof svg.addEventListener !== 'function') return () => {};
+        const handleWheel = (event) => {
+          event.preventDefault();
+          const rect = svg.getBoundingClientRect?.() ?? { left: 0, top: 0 };
+          const pointerX = event.clientX - rect.left;
+          const pointerY = event.clientY - rect.top;
+          const current = viewRef.current;
+          const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+          const nextZoom = Math.min(3, Math.max(0.55, current.zoom * factor));
+          const ratio = nextZoom / current.zoom;
+          setZoom(nextZoom);
+          setPan({
+            x: pointerX - (pointerX - current.pan.x) * ratio,
+            y: pointerY - (pointerY - current.pan.y) * ratio,
+          });
+        };
+        svg.addEventListener('wheel', handleWheel, { passive: false });
+        return () => svg.removeEventListener('wheel', handleWheel);
+      }, []);
+
+      const layoutKey = `${focusId ?? ''}|${width}x${height}|${props?.minCount ?? 1}|${props?.stamp ?? 0}|${nodes.length}|${edges.length}`;
+      if (layoutRef.current.key !== layoutKey) {
+        layoutRef.current = {
+          key: layoutKey,
+          layout: computeLayout({
+            nodes,
+            edges,
+            focusId,
+            width,
+            height,
+            minCount: props?.minCount ?? 1,
+            stamp: props?.stamp ?? 0,
+          }),
+        };
+      }
+      const layout = layoutRef.current.layout;
+      if (!layout) return null;
+
+      const nodeById = new Map(nodes.map((node) => [node.id, node]));
+      const activeId = hoverId ?? focusId;
+      const highlight = new Set();
+      if (search !== '') {
+        for (const node of nodes) {
+          if (String(node.label).toLowerCase().includes(search)) highlight.add(node.id);
+        }
+      } else if (activeId) {
+        highlight.add(activeId);
+        for (const entry of layout.adjacency.get(activeId) ?? []) highlight.add(entry.id);
+      }
+      const highlighted = search !== '' || activeId !== null;
+
+      const points = [];
+      for (const [id, point] of layout.positions) {
+        const node = nodeById.get(id);
+        if (node) points.push({ node, point, level: layout.ring?.get(id) ?? 1 });
+      }
+      const pointById = new Map(points.map((entry) => [entry.node.id, entry.point]));
+      const nodeBoxes = points.map(({ node, point, level }) => {
+        const radius = nodeRadius(node.mentions, layout.maxMentions) * (level === 0 ? 1.25 : 1) + 2;
+        return { id: node.id, left: point.x - radius, right: point.x + radius, top: point.y - radius, bottom: point.y + radius };
+      });
+
+      const edgeElements = [];
+      layout.visible.forEach((edge, position) => {
+        const from = pointById.get(edge.source);
+        const to = pointById.get(edge.target);
+        if (!from || !to) return;
+        const hot = activeId !== null && (edge.source === activeId || edge.target === activeId);
+        const dim = highlighted && !hot;
+        const stroke = edge.kind === 'hub' ? '#6ea8fe' : C.text3;
+        edgeElements.push(
+          h('line', {
+            key: `edge-${position}`,
+            x1: from.x,
+            y1: from.y,
+            x2: to.x,
+            y2: to.y,
+            stroke,
+            strokeWidth: edge.kind === 'hub' ? 1.2 : 0.9,
+            opacity: dim ? 0.05 : hot ? 0.5 : edge.kind === 'hub' ? 0.3 : 0.14,
+            strokeLinecap: 'round',
+          }),
+        );
+      });
+
+      const nodeElements = [];
+      const labelElements = [];
+      const labelBoxes = [];
+      for (const { node, point, level } of points) {
+        const radius = nodeRadius(node.mentions, layout.maxMentions) * (level === 0 ? 1.25 : 1);
+        const dim = highlighted && !highlight.has(node.id);
+        const isActive = node.id === activeId;
+        const color =
+          layout.mode === 'focus'
+            ? level === 0
+              ? '#8fb6ff'
+              : level === 1
+                ? '#6ea8fe'
+                : '#64748b'
+            : layout.colors.get(node.id) ?? C.text3;
+        nodeElements.push(
+          h(
+            'g',
+            { key: `node-${node.id}` },
+            isActive
+              ? h('circle', { cx: point.x, cy: point.y, r: radius + 7, fill: color, opacity: 0.16 })
+              : null,
+            h('circle', {
+              cx: point.x,
+              cy: point.y,
+              r: radius,
+              fill: color,
+              fillOpacity: dim ? 0.25 : 1,
+              stroke: isActive ? C.text : 'none',
+              strokeWidth: isActive ? 1.2 : 0,
+              style: { cursor: 'pointer' },
+              tabIndex: 0,
+              role: 'button',
+              'aria-label': `${node.label} · ${fill(t('graphMentions'), { n: node.mentions ?? 0 })}`,
+              onMouseEnter: () => setHoverId(node.id),
+              onMouseLeave: () => setHoverId((current) => (current === node.id ? null : current)),
+              onMouseDown: (event) => event.stopPropagation(),
+              onClick: () => props?.onFocus?.(node.id),
+              onKeyDown: (event) => {
+                if (event.key === 'Enter' || event.key === ' ') props?.onFocus?.(node.id);
+              },
+            }),
+          ),
+        );
+
+        const labeled = layout.labelIds.has(node.id) || (search !== '' && highlight.has(node.id));
+        if (!labeled) continue;
+        const size = level === 0 ? 12 : 10.5;
+        let anchor = 'middle';
+        let dx = 0;
+        let dy = radius + 12;
+        if (layout.mode === 'focus' && level > 0) {
+          const angle = Math.atan2(point.y - height / 2, point.x - width / 2);
+          if (Math.cos(angle) > 0.3) {
+            anchor = 'start';
+            dx = radius + 12;
+            dy = 3.5;
+          } else if (Math.cos(angle) < -0.3) {
+            anchor = 'end';
+            dx = -(radius + 12);
+            dy = 3.5;
+          }
+        }
+        const anchorX = point.x + dx;
+        const room = anchor === 'start'
+          ? width - anchorX - 6
+          : anchor === 'end'
+            ? anchorX - 6
+            : Math.min(anchorX, width - anchorX) * 2 - 8;
+        const text = fitText(node.label, room, size);
+        if (text === null || point.y + dy > height - 4 || point.y + dy < 12) continue;
+        const labelWidth = textWidth(text, size);
+        const left = anchor === 'start' ? anchorX : anchor === 'end' ? anchorX - labelWidth : anchorX - labelWidth / 2;
+        const box = { left: left - 2, right: left + labelWidth + 2, top: point.y + dy - 11, bottom: point.y + dy + 4 };
+        const hitsNode = layout.mode === 'focus' && nodeBoxes.some(
+          (other) =>
+            other.id !== node.id &&
+            (layout.ring?.get(other.id) ?? 1) <= 1 &&
+            box.left < other.right &&
+            box.right > other.left &&
+            box.top < other.bottom &&
+            box.bottom > other.top,
+        );
+        if (hitsNode) continue;
+        if (labelBoxes.some((other) => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) {
+          continue;
+        }
+        labelBoxes.push(box);
+        labelElements.push(
+          h(
+            'text',
+            {
+              key: `label-${node.id}`,
+              x: point.x + dx,
+              y: point.y + dy,
+              textAnchor: anchor,
+              fontSize: size,
+              fontWeight: level === 0 ? 600 : 400,
+              fill: C.text,
+              opacity: dim ? 0.35 : 0.95,
+              style: { pointerEvents: 'none' },
+            },
+            text,
+          ),
+        );
+      }
+
+      const legend =
+        layout.mode === 'focus'
+          ? h(
+              'div',
+              {
+                style: {
+                  position: 'absolute',
+                  right: 10,
+                  top: 8,
+                  display: 'flex',
+                  gap: 10,
+                  fontSize: 10.5,
+                  color: C.text3,
+                  pointerEvents: 'none',
+                },
+              },
+              ...[
+                ['#8fb6ff', t('graphLegendFocus')],
+                ['#6ea8fe', t('graphLegendNear')],
+                ['#64748b', t('graphLegendFar')],
+              ].map(([color, text]) =>
+                h(
+                  'span',
+                  { key: text, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+                  h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block' } }),
+                  text,
+                ),
+              ),
+            )
+          : null;
+
+      return h(
+        'div',
+        { style: { position: 'relative', width: '100%', height: '100%' } },
+        h(
+          'svg',
+          {
+            ref: svgRef,
+            width,
+            height,
+            viewBox: `0 0 ${width} ${height}`,
+            role: 'img',
+            'aria-label': t('graphTitle'),
+            style: { display: 'block', width, height, cursor: 'grab', userSelect: 'none' },
+            onMouseDown: (event) => {
+              if (event.button !== 0) return;
+              dragRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y, moved: false };
+            },
+            onMouseMove: (event) => {
+              const state = dragRef.current;
+              if (!state) return;
+              const dx = event.clientX - state.x;
+              const dy = event.clientY - state.y;
+              if (Math.abs(dx) + Math.abs(dy) > 3) state.moved = true;
+              setPan({ x: state.panX + dx, y: state.panY + dy });
+            },
+            onMouseUp: () => {
+              const state = dragRef.current;
+              dragRef.current = null;
+              if (state && !state.moved) props?.onBackground?.();
+            },
+            onMouseLeave: () => {
+              dragRef.current = null;
+            },
+          },
+          h('g', { transform: `translate(${pan.x} ${pan.y}) scale(${zoom})` }, edgeElements, nodeElements, labelElements),
+        ),
+        h(
+          'div',
+          {
+            style: {
+              position: 'absolute',
+              left: 10,
+              right: 10,
+              bottom: 8,
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 10,
+              fontSize: 10.5,
+              color: C.text3,
+              pointerEvents: 'none',
+            },
+          },
+          h('span', null, t('graphHint')),
+          layout.hidden > 0 ? h('span', null, fill(t('graphHidden'), { n: layout.hidden })) : null,
+        ),
+        legend,
+      );
+    }
+
+    function GraphMessage({ text, action }) {
+      return h(
+        'div',
+        {
+          style: {
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 10,
+            padding: 20,
+            textAlign: 'center',
+            fontSize: 12,
+            color: C.text3,
+          },
+        },
+        h('span', { style: { maxWidth: 360 } }, text),
+        action ?? null,
+      );
+    }
+
+    function GraphDrawer(props) {
+      const t = typeof props?.t === 'function' ? props.t : fallbackT;
+      const [expandedId, setExpandedId] = useState(null);
+      const focusId = props?.focusId ?? null;
+      const detail = props?.detail ?? null;
+      const loading = props?.loading === true;
+      const error = props?.error ?? null;
+      const topEntities = Array.isArray(props?.topEntities) ? props.topEntities : [];
+
+      useEffect(() => {
+        setExpandedId(null);
+      }, [focusId]);
+
+      if (!focusId) {
+        return h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 6, minHeight: 0 } },
+          h('div', { style: { fontSize: 12, fontWeight: 600, color: C.text } }, t('graphTopEntities')),
+          ...topEntities.slice(0, 12).map((node) =>
+            h(
+              'button',
+              {
+                key: node.id,
+                type: 'button',
+                onClick: () => props?.onFocus?.(node.id),
+                style: {
+                  appearance: 'none',
+                  border: 'none',
+                  background: 'transparent',
+                  color: C.text2,
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 8,
+                  padding: '4px 2px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontSize: 11.5,
+                },
+              },
+              h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, node.label),
+              h('span', { style: { flex: 'none', color: C.text3, fontSize: 10.5 } }, String(node.mentions ?? 0)),
+            ),
+          ),
+          h('div', { style: { marginTop: 'auto', paddingTop: 10, fontSize: 11, color: C.text3, lineHeight: 1.5 } }, t('graphDetailHint')),
+        );
+      }
+
+      if (error) {
+        return h(
+          'div',
+          { style: { fontSize: 11.5, color: C.err, display: 'flex', flexDirection: 'column', gap: 8 } },
+          h('span', null, `${t('graphDetailFailed')}: ${error}`),
+          props?.onRetry ? h(Button, { onClick: props.onRetry }, t('graphRetry')) : null,
+        );
+      }
+
+      if (loading || !detail) {
+        return h('div', { style: { fontSize: 11.5, color: C.text3 } }, t('graphLoading'));
+      }
+
+      const entity = detail.entity ?? {};
+      const memories = Array.isArray(detail.memories) ? detail.memories : [];
+      const stat = (value, label) =>
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 1 } },
+          h('span', { style: { fontSize: 14, fontWeight: 600, color: C.text } }, value),
+          h('span', { style: { fontSize: 10, color: C.text3 } }, label),
+        );
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 9, minHeight: 0 } },
+        h(
+          'div',
+          null,
+          h('div', { style: { fontSize: 13.5, fontWeight: 600, color: C.text, wordBreak: 'break-word' } }, entity.label ?? focusId),
+          h('div', { style: { fontSize: 11, color: C.text3, marginTop: 2 } }, fill(t('graphMentions'), { n: entity.mentions ?? 0 })),
+        ),
+        h(
+          'div',
+          {
+            style: {
+              display: 'flex',
+              gap: 14,
+              padding: '8px 0',
+              borderTop: `1px solid ${C.border}`,
+              borderBottom: `1px solid ${C.border}`,
+            },
+          },
+          stat(String(detail.total ?? memories.length), t('graphMemories')),
+          stat(shortDate(entity.firstSeen), t('graphFirstSeen')),
+          stat(shortDate(entity.lastSeen), t('graphLastSeen')),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 7, minHeight: 0, overflowY: 'auto' } },
+          memories.length === 0
+            ? h('div', { style: { fontSize: 11.5, color: C.text3 } }, t('graphNoMemories'))
+            : memories.map((memory) => {
+                const expanded = expandedId === memory.id;
+                const long = String(memory.text ?? '').length > 96;
+                return h(
+                  'div',
+                  { key: memory.id, style: { background: C.surface2, borderRadius: 8, padding: '7px 8px' } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: C.text3 } },
+                    h(Dot, { color: FACT_COLORS[memory.factType] ?? FACT_COLORS.fact, size: 5 }),
+                    h('span', { style: { color: C.text2 } }, memory.factType),
+                    h('span', { style: { marginLeft: 'auto' } }, shortDate(memory.date)),
+                  ),
+                  h(
+                    'div',
+                    {
+                      onClick: long ? () => setExpandedId(expanded ? null : memory.id) : undefined,
+                      style: {
+                        fontSize: 11.5,
+                        color: C.text2,
+                        lineHeight: 1.5,
+                        marginTop: 4,
+                        cursor: long ? 'pointer' : 'default',
+                        wordBreak: 'break-word',
+                      },
+                    },
+                    expanded ? memory.text : `${String(memory.text ?? '').slice(0, 96)}${long ? '…' : ''}`,
+                  ),
+                );
+              }),
+        ),
+        detail.total > memories.length || props?.showAll
+          ? h(
+              Button,
+              { onClick: props?.onViewAll },
+              props?.showAll ? t('graphCollapse') : fill(t('graphViewAll'), { n: detail.total }),
+            )
+          : null,
+      );
+    }
+
+    function GraphPanel(props) {
+      const t = typeof props?.t === 'function' ? props.t : fallbackT;
+      const running = props?.running === true;
+      const [graph, setGraph] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [focusId, setFocusId] = useState(null);
+      const [detail, setDetail] = useState(null);
+      const [detailLoading, setDetailLoading] = useState(false);
+      const [detailError, setDetailError] = useState(null);
+      const [showAll, setShowAll] = useState(false);
+      const [search, setSearch] = useState('');
+      const [minCount, setMinCount] = useState(1);
+      const [size, setSize] = useState({ width: 0, height: 0 });
+      const [reloadToken, setReloadToken] = useState(0);
+      const [detailToken, setDetailToken] = useState(0);
+      const boxRef = useRef(null);
+      const alive = useRef(true);
+      const focusedOnce = useRef(false);
+
+      useEffect(() => {
+        alive.current = true;
+        return () => {
+          alive.current = false;
+        };
+      }, []);
+
+      const loadGraph = useCallback(async () => {
+        if (!running) return;
+        setLoading(true);
+        setError(null);
+        try {
+          const res = await fetch(`${API}/graph`, { cache: 'no-store' });
+          const body = await res.json().catch(() => ({}));
+          if (!alive.current) return;
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          setGraph(body);
+          setLoading(false);
+          if (!focusedOnce.current && Array.isArray(body.nodes) && body.nodes.length > 0) {
+            focusedOnce.current = true;
+            const top = [...body.nodes].sort((left, right) => (right.mentions ?? 0) - (left.mentions ?? 0))[0];
+            setFocusId(top.id);
+          }
+        } catch (loadError) {
+          if (!alive.current) return;
+          setError(loadError?.message ?? String(loadError));
+          setLoading(false);
+        }
+      }, [running]);
+
+      useEffect(() => {
+        if (!running) {
+          setGraph(null);
+          setError(null);
+          setLoading(false);
+          return;
+        }
+        loadGraph();
+      }, [running, loadGraph, reloadToken]);
+
+      useEffect(() => {
+        const element = boxRef.current;
+        if (!element || typeof window === 'undefined') return () => {};
+        const measure = () => {
+          const rect = element.getBoundingClientRect?.();
+          if (!rect || rect.width <= 0 || rect.height <= 0) return;
+          setSize((current) =>
+            Math.abs(current.width - rect.width) < 2 && Math.abs(current.height - rect.height) < 2
+              ? current
+              : { width: Math.round(rect.width), height: Math.round(rect.height) },
+          );
+        };
+        measure();
+        let observer = null;
+        if (typeof ResizeObserver !== 'undefined') {
+          observer = new ResizeObserver(measure);
+          observer.observe(element);
+        } else if (typeof window.addEventListener === 'function') {
+          window.addEventListener('resize', measure);
+        }
+        return () => {
+          if (observer) observer.disconnect();
+          else if (typeof window.removeEventListener === 'function') window.removeEventListener('resize', measure);
+        };
+      }, []);
+
+      useEffect(() => {
+        if (!focusId) {
+          setDetail(null);
+          return;
+        }
+        let cancelled = false;
+        setDetailLoading(true);
+        setDetailError(null);
+        const loadDetail = async () => {
+          try {
+            const limit = showAll ? 100 : 5;
+            const res = await fetch(`${API}/entity?id=${encodeURIComponent(focusId)}&limit=${limit}`, {
+              cache: 'no-store',
+            });
+            const body = await res.json().catch(() => ({}));
+            if (cancelled) return;
+            if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+            setDetail(body);
+            setDetailLoading(false);
+          } catch (loadError) {
+            if (cancelled) return;
+            setDetailError(loadError?.message ?? String(loadError));
+            setDetailLoading(false);
+          }
+        };
+        loadDetail();
+        return () => {
+          cancelled = true;
+        };
+      }, [focusId, showAll, detailToken]);
+
+      const handleFocus = useCallback((id) => {
+        setShowAll(false);
+        setFocusId(id);
+      }, []);
+
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+      const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+      const focusNode = focusId ? nodes.find((node) => node.id === focusId) : null;
+      const topEntities = [...nodes].sort((left, right) => (right.mentions ?? 0) - (left.mentions ?? 0));
+      const matches = search.trim() === '' ? 0 : nodes.filter((node) => String(node.label).toLowerCase().includes(search.trim().toLowerCase())).length;
+
+      const canvasWidth = Math.max(220, size.width || 620);
+      const canvasHeight = Math.max(180, size.height || 420);
+
+      let canvasContent;
+      if (!running) {
+        canvasContent = h(GraphMessage, { text: t('downHint') });
+      } else if (error) {
+        canvasContent = h(GraphMessage, {
+          text: `${t('graphLoadFailed')}: ${error}`,
+          action: h(Button, { onClick: () => setReloadToken((token) => token + 1) }, t('graphRetry')),
+        });
+      } else if (loading && graph === null) {
+        canvasContent = h(GraphMessage, { text: t('graphLoading') });
+      } else if (nodes.length === 0) {
+        canvasContent = h(GraphMessage, { text: t('graphEmpty') });
+      } else {
+        canvasContent = h(GraphCanvas, {
+          t,
+          nodes,
+          edges,
+          focusId,
+          minCount,
+          search,
+          stamp: graph?.generatedAt ?? 0,
+          width: canvasWidth,
+          height: canvasHeight,
+          onFocus: handleFocus,
+          onBackground: () => setFocusId(null),
+        });
+      }
+
+      const chipCloseStyle = {
+        appearance: 'none',
+        border: 'none',
+        background: 'transparent',
+        color: C.text3,
+        cursor: 'pointer',
+        fontSize: 13,
+        lineHeight: 1,
+        padding: 0,
+      };
+
+      return h(
+        Card,
+        {
+          style: {
+            padding: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            height: 'calc(100vh - 252px)',
+            minHeight: 430,
+            overflow: 'hidden',
+          },
+        },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', flexWrap: 'wrap' } },
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', minWidth: 0 } },
+            h('span', { style: { fontSize: 13, fontWeight: 600, color: C.text } }, t('graphTitle')),
+            h(
+              'span',
+              { style: { fontSize: 11, color: C.text3 } },
+              graph ? fill(t('graphCounts'), { entities: graph.totalEntities, edges: graph.totalEdges }) : '',
+            ),
+          ),
+          focusNode
+            ? h(
+                'span',
+                {
+                  style: {
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 11.5,
+                    color: C.text2,
+                    background: C.surface2,
+                    borderRadius: 999,
+                    padding: '2px 10px',
+                    maxWidth: 260,
+                  },
+                },
+                h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `${t('graphFocus')} ${focusNode.label}`),
+                h('button', { type: 'button', onClick: () => setFocusId(null), title: t('graphBack'), style: chipCloseStyle }, '×'),
               )
             : null,
+          h('span', { style: { flex: 1 } }),
+          h('input', {
+            type: 'search',
+            value: search,
+            placeholder: t('graphSearch'),
+            onChange: (event) => setSearch(event.target.value),
+            style: { ...inputStyle, flex: 'none', width: 156, padding: '5px 9px', fontSize: 11.5 },
+          }),
+          search.trim() !== ''
+            ? h('span', { style: { fontSize: 10.5, color: C.text3 } }, fill(t('graphMatches'), { n: matches }))
+            : null,
+          h(
+            'select',
+            {
+              value: minCount,
+              onChange: (event) => setMinCount(Number(event.target.value)),
+              title: t('graphMin'),
+              disabled: focusNode !== null,
+              style: {
+                border: `1px solid ${C.border2}`,
+                background: C.base,
+                color: C.text2,
+                borderRadius: 7,
+                padding: '4px 6px',
+                fontSize: 11.5,
+              },
+            },
+            [1, 2, 3, 5, 10].map((value) =>
+              h('option', { key: value, value }, `${t('graphMin')} ${value}${t('graphMinUnit')}`),
+            ),
+          ),
+          h(Button, { onClick: () => setReloadToken((token) => token + 1), busy: loading, disabled: !running }, t('graphRefresh')),
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', flex: 1, minHeight: 0 } },
+          h(
+            'div',
+            {
+              ref: boxRef,
+              style: {
+                flex: 1,
+                minWidth: 0,
+                position: 'relative',
+                borderTop: `1px solid ${C.border}`,
+                overflow: 'hidden',
+              },
+            },
+            canvasContent,
+          ),
+          h(
+            'div',
+            {
+              style: {
+                width: 272,
+                flex: 'none',
+                borderLeft: `1px solid ${C.border}`,
+                borderTop: `1px solid ${C.border}`,
+                padding: 12,
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+              },
+            },
+            h(GraphDrawer, {
+              t,
+              focusId,
+              detail,
+              loading: detailLoading,
+              error: detailError,
+              showAll,
+              topEntities,
+              onFocus: handleFocus,
+              onViewAll: () => setShowAll((current) => !current),
+              onRetry: () => setDetailToken((token) => token + 1),
+            }),
+          ),
         ),
       );
     }
@@ -1739,6 +2964,13 @@ window.__ModuleLoader__.load({
       });
     }
 
-    return { name: NS, inject: ['slots', 'locale', 'layout', 'uiWorkspace'], apply };
+    return {
+      name: NS,
+      inject: ['slots', 'locale', 'layout', 'uiWorkspace'],
+      apply,
+      // Render handles for the smoke test; the module loader only reads
+      // name/inject/apply, so these are inert in the real host.
+      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout },
+    };
   },
 });

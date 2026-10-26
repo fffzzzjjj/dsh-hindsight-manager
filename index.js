@@ -38,6 +38,10 @@ const QUICK_TIMEOUT_MS = 8000;
 /** Recall reranks on CPU over the whole bank; measured ~10 s at 280 facts and it
  *  grows with the bank, so searches get their own generous budget. */
 const SEARCH_TIMEOUT_MS = 120_000;
+/** The entity graph is cheap for a small bank but the daemon aggregates every
+ *  entity link; a big bank needs more than the 8 s quick budget. */
+const GRAPH_TIMEOUT_MS = 25_000;
+const GRAPH_CACHE_MS = 5000;
 const BANK_CACHE_MS = 60_000;
 
 const READY_POLL_MS = 2000;
@@ -949,6 +953,76 @@ export function apply(ctx) {
     return out;
   }
 
+  let graphCache = { bank: null, at: 0, data: null };
+
+  /**
+   * The entity co-occurrence graph, flattened for the browser. Hindsight returns
+   * react-force-graph shaped `{nodes:[{data}], edges:[{data}]}`; the panel only
+   * needs ids, labels, mention counts and weights, so nothing else crosses over.
+   */
+  async function entityGraph() {
+    const bank = await resolveBank();
+    if (graphCache.data && graphCache.bank === bank && Date.now() - graphCache.at < GRAPH_CACHE_MS) {
+      return graphCache.data;
+    }
+    const body = await fetchJson(bankUrl(bank, '/entities/graph?limit=1000'), undefined, GRAPH_TIMEOUT_MS);
+    const nodes = (body.nodes ?? [])
+      .map((node) => ({
+        id: String(node?.data?.id ?? ''),
+        label: String(node?.data?.label ?? ''),
+        mentions: Number(node?.data?.mentionCount ?? 0),
+      }))
+      .filter((node) => node.id !== '');
+    const edges = (body.edges ?? [])
+      .map((edge) => ({
+        source: String(edge?.data?.source ?? ''),
+        target: String(edge?.data?.target ?? ''),
+        weight: Number(edge?.data?.weight ?? 1),
+        lastCooccurred: edge?.data?.lastCooccurred ?? null,
+      }))
+      .filter((edge) => edge.source !== '' && edge.target !== '');
+    const data = {
+      ok: true,
+      bank,
+      generatedAt: Date.now(),
+      totalEntities: Number(body.total_entities ?? nodes.length),
+      totalEdges: Number(body.total_edges ?? edges.length),
+      nodes,
+      edges,
+    };
+    graphCache = { bank, at: Date.now(), data };
+    return data;
+  }
+
+  /** One entity plus the memories that mention it — the drill-down from a node. */
+  async function entityDetail(id, limit) {
+    const bank = await resolveBank();
+    const encoded = encodeURIComponent(id);
+    const [entity, memories] = await Promise.all([
+      fetchJson(bankUrl(bank, `/entities/${encoded}`), undefined, GRAPH_TIMEOUT_MS),
+      fetchJson(bankUrl(bank, `/memories/list?entity_id=${encoded}&limit=${limit}`), undefined, GRAPH_TIMEOUT_MS),
+    ]);
+    return {
+      ok: true,
+      bank,
+      entity: {
+        id: String(entity?.id ?? id),
+        label: String(entity?.canonical_name ?? id),
+        mentions: Number(entity?.mention_count ?? 0),
+        firstSeen: entity?.first_seen ?? null,
+        lastSeen: entity?.last_seen ?? null,
+      },
+      total: Number(memories?.total ?? (memories?.items?.length ?? 0)),
+      memories: (memories?.items ?? []).map((item) => ({
+        id: item?.id,
+        text: item?.text ?? '',
+        factType: item?.fact_type ?? 'fact',
+        date: item?.date ?? item?.mentioned_at ?? null,
+        documentId: item?.document_id ?? null,
+      })),
+    };
+  }
+
   async function setupState() {
     const [config, status] = await Promise.all([loadConfig(), daemon.status()]);
     const integration = integrationStatus();
@@ -1081,6 +1155,33 @@ export function apply(ctx) {
           const bank = await resolveBank();
           const body = await fetchJson(bankUrl(bank, `/documents?limit=${limit}`));
           json(res, 200, { ok: true, bank, ...body });
+        } catch (error) {
+          json(res, error?.status === 404 ? 404 : 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/graph': async (_req, res) => {
+        try {
+          json(res, 200, await entityGraph());
+        } catch (error) {
+          if (error?.status === 404) {
+            json(res, 404, { ok: false, error: '当前 Hindsight 版本没有实体图谱接口（/entities/graph）' });
+            return;
+          }
+          json(res, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/entity': async (req, res) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+          const id = (url.searchParams.get('id') ?? '').trim();
+          if (id === '') {
+            json(res, 400, { ok: false, error: 'id is required' });
+            return;
+          }
+          const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 5) || 5, 1), 100);
+          json(res, 200, await entityDetail(id, limit));
         } catch (error) {
           json(res, error?.status === 404 ? 404 : 500, { ok: false, error: error?.message ?? String(error) });
         }

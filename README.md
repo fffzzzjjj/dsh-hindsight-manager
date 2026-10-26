@@ -24,6 +24,7 @@ Manage the local [Hindsight](https://hindsight.vectorize.io) memory daemon from 
 | **退出随停** | 独立看门狗进程盯着 DSH 主进程，DSH 一退就停掉守护进程并释放内存 |
 | **状态只读** | 运行状态是**不可点击**的文字 + 颜色点。启动和停止是**两个独立按钮**，各自在不适用的状态下禁用 |
 | **记忆库概况** | 文档数、事实数、关联数、观察数 |
+| **记忆图谱** | 实体共现图：默认聚焦最高频实体、两跳径向；可切「全图」看整张网络；点节点在右侧列出它的记忆 |
 | **搜索记忆** | 语义检索（recall），结果就地展示 |
 | **文档列表** | 最近 20 篇，含字符数、事实数、写入距今 |
 | **缓存可搬家** | 设置里填一个绝对路径，就能把 uv 缓存和本地模型放到别的盘 |
@@ -54,6 +55,17 @@ Manage the local [Hindsight](https://hindsight.vectorize.io) memory daemon from 
 > 状态区的绿点/黄点/红点就是运行标识：**运行中 / 启动中（自动重试中） / 启动失败**。下面还会给出失败原因和下一步建议。
 >
 > 页面根节点自带滚动容器，内容超过一屏可正常向下滚动（设置、诊断信息在底部）。
+
+## 记忆图谱
+
+页面顶部有「概览 / 图谱」两个 tab。图谱的数据来自 Hindsight 的 `/entities/graph`（实体共现），而不是把几百条记忆直接画出来——记忆图有上万条边，画出来是一团毛线。
+
+- **默认聚焦**：打开时以提及次数最高的实体为中心，第一圈是直接共现实体，第二圈是两跳。点任意节点把它变成新中心；点空白处或右上角「×」回到全图。
+- **全图**：所有实体，节点大小按提及次数；社区分色，如果整张图退化成一个大连通簇（这个库里很常见），自动改用提及次数着色。工具栏的「最少提及」可以砍掉低频节点。
+- **右侧抽屉**：实体的提及次数、首次/最近时间、最近 5 条记忆；「查看全部」一次拉 100 条，点单条展开全文。
+- **搜索**：按实体名即时高亮（不区分大小写），右边显示命中数。
+- 交互：拖拽平移、滚轮缩放、悬停高亮邻居；节点可用 Tab 聚焦、回车打开。
+- 全图最多画 160 个实体、1400 条边（按提及次数/权重取前），超出部分在左下角如实标注。
 
 ## 安装
 
@@ -126,6 +138,8 @@ Host 半边在 Harness 的 web server 上注册（`ctx.inject(['webServer'])` + 
 | `POST /hindsight-manager/api/setup` | `{"action":"install-integration"}` 或 `{"action":"save-key","apiKey":"…"}` |
 | `POST /hindsight-manager/api/daemon` | `{"action":"start"\|"stop"}` |
 | `GET  /hindsight-manager/api/documents?limit=N` | 文档列表 |
+| `GET  /hindsight-manager/api/graph` | 实体共现图（`nodes`/`edges` 扁平化，5 秒缓存） |
+| `GET  /hindsight-manager/api/entity?id=…&limit=N` | 单个实体 + 提及它的记忆 |
 | `POST /hindsight-manager/api/search` | `{"query":"…","budget":"low"}` |
 | `GET/POST /hindsight-manager/api/config` | 读 / 写 `installDir`、`autoStart` |
 

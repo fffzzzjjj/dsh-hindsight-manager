@@ -163,6 +163,73 @@ if (bundleConfig === undefined) {
   }
 }
 
+// ── the graph layout helpers and the canvas ─────────────────────────────────
+const handles = mod.__test ?? {};
+if (typeof handles.focusLayout !== 'function' || typeof handles.fullLayout !== 'function') {
+  note('graph layout helpers are not exported for the test');
+} else {
+  const nodes = [
+    { id: 'a', label: 'alpha', mentions: 5 },
+    { id: 'b', label: 'beta', mentions: 3 },
+    { id: 'c', label: 'gamma', mentions: 1 },
+    { id: 'd', label: 'delta', mentions: 1 },
+  ];
+  const edges = [
+    { source: 'a', target: 'b', weight: 2 },
+    { source: 'b', target: 'c', weight: 1 },
+    { source: 'b', target: 'd', weight: 1 },
+  ];
+  const focused = handles.focusLayout(nodes, edges, 'a', 600, 400);
+  if (!focused) note('focusLayout returned nothing');
+  else {
+    if (!focused.positions.has('a')) note('focusLayout dropped the focus node');
+    if (focused.positions.size !== 4) note(`focusLayout placed ${focused.positions.size} nodes, expected 4`);
+    if (!(focused.adjacency.get('a') ?? []).length) note('focusLayout has no adjacency for the focus node');
+    if (!focused.labelIds.has('b')) note('focusLayout did not label a direct neighbour');
+  }
+  const full = handles.fullLayout(nodes, edges, 600, 400, 2, 1);
+  if (!full) note('fullLayout returned nothing');
+  else {
+    if (full.positions.size !== 2) note(`fullLayout kept ${full.positions.size} nodes, expected 2 above minCount 2`);
+    if (!full.labelIds.has('a')) note('fullLayout did not label the busiest node');
+  }
+}
+
+if (typeof handles.GraphCanvas !== 'function') {
+  note('GraphCanvas is not exported for the test');
+} else {
+  try {
+    const tree = handles.GraphCanvas({
+      t: (key) => key,
+      width: 600,
+      height: 400,
+      focusId: 'a',
+      stamp: 1,
+      nodes: [
+        { id: 'a', label: 'alpha', mentions: 5 },
+        { id: 'b', label: 'beta', mentions: 3 },
+      ],
+      edges: [{ source: 'a', target: 'b', weight: 2 }],
+    });
+    const shapes = [];
+    (function collect(node) {
+      if (node === null || node === undefined) return;
+      if (Array.isArray(node)) {
+        node.forEach(collect);
+        return;
+      }
+      if (typeof node !== 'object' || !('type' in node)) return;
+      if (node.type === 'circle' || node.type === 'line' || node.type === 'text') shapes.push(node.type);
+      (node.children ?? []).forEach(collect);
+    })(tree);
+    if (!shapes.includes('circle')) note('GraphCanvas drew no nodes');
+    if (!shapes.includes('line')) note('GraphCanvas drew no edges');
+    if (!shapes.includes('text')) note('GraphCanvas drew no labels');
+  } catch (error) {
+    note(`GraphCanvas threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
+  }
+}
+
 // ── render once with the fallback translator ─────────────────────────────────
 function renderCase() {
   seen.length = 0;
