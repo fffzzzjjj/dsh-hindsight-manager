@@ -303,6 +303,41 @@ if (typeof handles.ObservationHistory !== 'function') {
   }
 }
 
+// ── cleanup stale list exposes observation history ─────────────────────────
+if (typeof handles.CleanupPanel === 'function') {
+  try {
+    const stale = handles.CleanupPanel({
+      t: (key) => key,
+      running: true,
+      loading: false,
+      staleDays: 90,
+      initialFilter: 'stale',
+      onChangeStaleDays() {},
+      onRefresh() {},
+      data: {
+        scanned: 5,
+        total: 5,
+        truncated: false,
+        staleDays: 90,
+        counts: { invalidated: 0, duplicateGroups: 0, duplicateItems: 0, stale: 1 },
+        duplicates: [],
+        stale: [{ id: 'o1', text: '很久没有变动的观察内容', factType: 'observation', date: '2026-01-01T00:00:00Z' }],
+        forgotten: [],
+      },
+    });
+    let historyButtons = 0;
+    (function walk(node) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (node.type === 'button' && (node.children ?? []).includes('history')) historyButtons += 1;
+      (node.children ?? []).forEach(walk);
+    })(stale);
+    if (historyButtons < 1) note('cleanup stale list has no history button');
+  } catch (error) {
+    note(`CleanupPanel stale threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
+  }
+}
+
 // ── render once with the fallback translator ─────────────────────────────────
 function renderCase() {
   seen.length = 0;

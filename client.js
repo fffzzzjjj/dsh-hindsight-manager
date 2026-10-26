@@ -3093,10 +3093,11 @@ window.__ModuleLoader__.load({
       const data = props?.data ?? null;
       const loading = props?.loading === true;
       const staleDays = props?.staleDays ?? 90;
-      const [filter, setFilter] = useState('duplicates');
+      const [filter, setFilter] = useState(props?.initialFilter ?? 'duplicates');
       const [selected, setSelected] = useState(() => new Set());
       const [step, setStep] = useState(0);
       const [reason, setReason] = useState('重复或过时（面板清理）');
+      const [historyId, setHistoryId] = useState(null);
       const [limit, setLimit] = useState(100);
       const [busy, setBusy] = useState(false);
       const [result, setResult] = useState(null);
@@ -3107,6 +3108,7 @@ window.__ModuleLoader__.load({
         setStep(0);
         setResult(null);
         setError(null);
+        setHistoryId(null);
       }, [filter, data?.staleDays]);
 
       const selectStyle = {
@@ -3255,6 +3257,30 @@ window.__ModuleLoader__.load({
               filter === 'forgotten' && item.invalidatedAt ? h('span', null, `${t('cleanupForgotten')} · ${shortDate(item.invalidatedAt)}`) : null,
               filter === 'forgotten' && item.reason ? h('span', null, item.reason) : null,
               item.factType === 'observation' ? h('span', { style: { color: C.warn } }, t('cleanupObservation')) : null,
+              item.factType === 'observation'
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      onClick: (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setHistoryId((current) => (current === item.id ? null : item.id));
+                      },
+                      style: {
+                        appearance: 'none',
+                        border: 'none',
+                        background: 'transparent',
+                        color: C.text3,
+                        fontSize: 10,
+                        cursor: 'pointer',
+                        padding: 0,
+                        textDecoration: 'underline dotted',
+                      },
+                    },
+                    t('history'),
+                  )
+                : null,
             ),
           ),
         );
@@ -3334,6 +3360,7 @@ window.__ModuleLoader__.load({
           },
           listBody,
         ),
+        historyId ? h(ObservationHistory, { t, id: historyId, onClose: () => setHistoryId(null) }) : null,
         rows.length > 0
           ? h(
               'div',
