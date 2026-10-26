@@ -244,6 +244,81 @@ async function saveConfig(patch) {
   return next;
 }
 
+// ── duplicate detection (text level only) ────────────────────────────────────
+
+/** Lowercase, drop punctuation/whitespace so "same fact, different punctuation" still matches. */
+function normalizeMemoryText(text) {
+  return String(text ?? '')
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function trigramSet(text) {
+  const set = new Set();
+  if (text.length <= 3) {
+    set.add(text);
+    return set;
+  }
+  for (let index = 0; index <= text.length - 3; index += 1) set.add(text.slice(index, index + 3));
+  return set;
+}
+
+function jaccard(left, right) {
+  let shared = 0;
+  for (const gram of left) if (right.has(gram)) shared += 1;
+  return shared / (left.size + right.size - shared || 1);
+}
+
+/**
+ * Union-find over memory ids; two facts join when their normalized trigrams are
+ * near-identical. Text-level only — it never claims semantic duplication.
+ */
+function duplicateGroups(items, threshold = 0.9) {
+  const usable = items.filter((item) => {
+    const normalized = normalizeMemoryText(item.text);
+    return normalized.length >= 12 && item.factType !== 'observation';
+  });
+  const signatures = usable.map((item) => trigramSet(normalizeMemoryText(item.text)));
+  const lengths = usable.map((item) => normalizeMemoryText(item.text).length);
+  const parent = usable.map((_, index) => index);
+  const find = (index) => {
+    let root = index;
+    while (parent[root] !== root) root = parent[root];
+    let cursor = index;
+    while (parent[cursor] !== cursor) {
+      const next = parent[cursor];
+      parent[cursor] = root;
+      cursor = next;
+    }
+    return root;
+  };
+  const union = (left, right) => {
+    const a = find(left);
+    const b = find(right);
+    if (a !== b) parent[b] = a;
+  };
+  for (let left = 0; left < usable.length; left += 1) {
+    for (let right = left + 1; right < usable.length; right += 1) {
+      const shorter = Math.min(lengths[left], lengths[right]);
+      const longer = Math.max(lengths[left], lengths[right]);
+      if (shorter / longer < 0.6) continue;
+      if (jaccard(signatures[left], signatures[right]) < threshold) continue;
+      union(left, right);
+    }
+  }
+  const groups = new Map();
+  usable.forEach((item, index) => {
+    const root = find(index);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(item);
+  });
+  return [...groups.values()]
+    .filter((group) => group.length > 1)
+    .sort((left, right) => right.length - left.length)
+    .slice(0, 40)
+    .map((group) => group.slice(0, 8));
+}
+
 // ── per-bank settings this panel may change ──────────────────────────────────
 // A deliberately small, explainable subset of Hindsight's bank config: the knobs
 // that trade recall cost/latency against quality, and the write-side LLM cost.
@@ -1041,6 +1116,9 @@ export function apply(ctx) {
   /** Last recall probe per bank: a fixed question, so timings stay comparable. */
   const healthProbes = new Map();
 
+  /** Cleanup scans are O(n²) over the bank; they are cached per filter window. */
+  const cleanupCache = new Map();
+
   const pairKey = (left, right) => (left < right ? `${left}|${right}` : `${right}|${left}`);
   const laterIso = (left, right) => {
     if (!left) return right ?? null;
@@ -1169,6 +1247,84 @@ export function apply(ctx) {
       },
     };
     graphCache = { bank, at: Date.now(), data };
+    return data;
+  }
+
+  /**
+   * Counts what would be cleaned up: invalidated facts, near-duplicate groups and
+   * facts that have not changed for a while ("长期未动" — this bank does not track
+   * recall hits, so it must not be called "not recalled").
+   */
+  async function cleanupScan(bank, staleDays, scanLimit) {
+    const key = `${bank}|${staleDays}|${scanLimit}`;
+    const cached = cleanupCache.get(key);
+    if (cached && Date.now() - cached.at < 60_000) return cached.data;
+
+    const valid = [];
+    let total = 0;
+    for (let offset = 0; offset < scanLimit; offset += 200) {
+      const page = await fetchJson(
+        bankUrl(bank, `/memories/list?limit=200&offset=${offset}&state=valid`),
+        undefined,
+        GRAPH_TIMEOUT_MS,
+      );
+      total = Number(page.total ?? valid.length);
+      const items = Array.isArray(page.items) ? page.items : [];
+      valid.push(...items);
+      if (items.length === 0 || valid.length >= total) break;
+    }
+
+    const forgottenPage = await fetchJson(
+      bankUrl(bank, '/memories/list?limit=100&state=invalidated'),
+      undefined,
+      GRAPH_TIMEOUT_MS,
+    );
+    const invalidatedTotal = Number(forgottenPage.total ?? 0);
+    const forgotten = (forgottenPage.items ?? []).slice(0, 100).map((item) => ({
+      id: item.id,
+      text: item.text ?? '',
+      factType: item.fact_type ?? 'fact',
+      date: item.date ?? null,
+      invalidatedAt: item.invalidated_at ?? null,
+      reason: item.invalidation_reason ?? null,
+    }));
+
+    const sliced = valid.slice(0, scanLimit).map((item) => ({
+      id: item.id,
+      text: item.text ?? '',
+      factType: item.fact_type ?? 'fact',
+      date: item.date ?? null,
+      updatedAt: item.updated_at ?? item.date ?? null,
+    }));
+
+    const cutoff = Date.now() - staleDays * 24 * 60 * 60 * 1000;
+    const stale = sliced
+      .filter((item) => {
+        const when = Date.parse(item.updatedAt ?? '');
+        return Number.isFinite(when) && when < cutoff;
+      })
+      .sort((left, right) => String(left.updatedAt).localeCompare(String(right.updatedAt)))
+      .slice(0, 200);
+
+    const groups = duplicateGroups(sliced);
+    const data = {
+      ok: true,
+      bank,
+      staleDays,
+      scanned: sliced.length,
+      total,
+      truncated: total > sliced.length,
+      counts: {
+        invalidated: invalidatedTotal,
+        duplicateGroups: groups.length,
+        duplicateItems: groups.reduce((sum, group) => sum + group.length, 0),
+        stale: stale.length,
+      },
+      duplicates: groups,
+      stale,
+      forgotten,
+    };
+    cleanupCache.set(key, { at: Date.now(), data });
     return data;
   }
 
@@ -1362,6 +1518,79 @@ export function apply(ctx) {
           json(res, 200, await entityDetail(id, limit));
         } catch (error) {
           json(res, error?.status === 404 ? 404 : 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/cleanup': async (req, res) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+          const staleDays = Math.min(3650, Math.max(1, Number(url.searchParams.get('staleDays')) || 90));
+          const scanLimit = Math.min(2000, Math.max(100, Number(url.searchParams.get('scan')) || 800));
+          const bank = await resolveBank();
+          json(res, 200, await cleanupScan(bank, staleDays, scanLimit));
+        } catch (error) {
+          json(res, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/memories/action': async (req, res) => {
+        try {
+          const raw = await readBody(req);
+          const body = raw.length === 0 ? {} : JSON.parse(raw);
+          const action = body.action;
+          if (action !== 'invalidate' && action !== 'restore') {
+            json(res, 400, { ok: false, error: 'action must be invalidate or restore' });
+            return;
+          }
+          const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).filter((id) => typeof id === 'string' && id !== ''))];
+          if (ids.length === 0) {
+            json(res, 400, { ok: false, error: 'ids must not be empty' });
+            return;
+          }
+          if (ids.length > 500) {
+            json(res, 400, { ok: false, error: 'at most 500 memories per call' });
+            return;
+          }
+          let reason = '';
+          if (action === 'invalidate') {
+            reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+            if (reason === '' || reason.length > 200) {
+              json(res, 400, { ok: false, error: 'reason is required (1-200 chars) for invalidate' });
+              return;
+            }
+          }
+          const bank = await resolveBank();
+          const results = new Array(ids.length);
+          const chunkSize = 8;
+          for (let start = 0; start < ids.length; start += chunkSize) {
+            const chunk = ids.slice(start, start + chunkSize);
+            await Promise.all(
+              chunk.map(async (id, index) => {
+                const position = start + index;
+                try {
+                  await fetchJson(
+                    bankUrl(bank, `/memories/${encodeURIComponent(id)}`),
+                    {
+                      method: 'PATCH',
+                      headers: { 'content-type': 'application/json; charset=utf-8' },
+                      body: JSON.stringify(action === 'invalidate' ? { state: 'invalidated', reason } : { state: 'valid' }),
+                    },
+                    GRAPH_TIMEOUT_MS,
+                  );
+                  results[position] = { id, ok: true };
+                } catch (error) {
+                  results[position] = { id, ok: false, error: error?.message ?? String(error) };
+                }
+              }),
+            );
+          }
+          for (const key of [...cleanupCache.keys()]) {
+            if (key.startsWith(`${bank}|`)) cleanupCache.delete(key);
+          }
+          const succeeded = results.filter((entry) => entry.ok).length;
+          json(res, 200, { ok: true, action, succeeded, failed: results.length - succeeded, results });
+        } catch (error) {
+          json(res, 400, { ok: false, error: error?.message ?? String(error) });
         }
       },
 

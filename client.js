@@ -103,6 +103,42 @@ window.__ModuleLoader__.load({
       bankConfigSaved: '已保存',
       bankConfigFailed: '保存失败',
       extrasMissing: '当前 host 还没加载这个接口，重启 DSH 后可用。',
+      tabCleanup: '清理',
+      cleanupTitle: '清理',
+      cleanupHint: '只做“失效”（可恢复），不删除数据',
+      cleanupRescan: '重新扫描',
+      cleanupScanning: '扫描中…',
+      cleanupScanned: '扫描 {scanned} / {total} 条',
+      cleanupTruncated: '（仅最近 {scanned} 条）',
+      cleanupDuplicates: '疑似重复',
+      cleanupStale: '长期未动',
+      cleanupForgotten: '已遗忘',
+      cleanupGroups: ' 组',
+      cleanupDays: '天',
+      cleanupEmptyDup: '没有发现文本高度相似的记忆。',
+      cleanupEmptyStale: '没有超过 {days} 天未变动的记忆。',
+      cleanupEmptyForgotten: '还没有失效的记忆。',
+      cleanupSelectAll: '全选可选',
+      cleanupClear: '清空选择',
+      cleanupInvalidate: '失效选中（{n}）',
+      cleanupRestore: '恢复选中（{n}）',
+      cleanupReason: '原因',
+      cleanupReasonPlaceholder: '例如：重复、过时、导入错误',
+      cleanupLimit: '单次上限',
+      cleanupNext: '继续',
+      cleanupBack: '返回',
+      cleanupCancel: '取消',
+      cleanupConfirmTitle: '确认失效 {n} 条？',
+      cleanupConfirmBody: '失效后它们会从检索、图谱和 consolidation 中消失，但可以在「已遗忘」里恢复。',
+      cleanupConfirm: '确认执行',
+      cleanupWorking: '处理中…',
+      cleanupResult: '成功 {ok} 条，失败 {failed} 条',
+      cleanupReasonRequired: '请填写原因',
+      cleanupOverLimit: '选了 {n} 条，超过单次上限 {limit}',
+      cleanupObservation: '观察是派生数据，不能直接失效',
+      cleanupOpen: '打开清理',
+      cleanupPending: '待清理',
+      cleanupScanFailed: '扫描失败',
       provider: '抽取模型',
       cache: '缓存位置',
       systemDefault: '系统默认位置',
@@ -292,6 +328,42 @@ window.__ModuleLoader__.load({
       bankConfigSaved: 'Saved',
       bankConfigFailed: 'Could not save',
       extrasMissing: 'The host has not loaded this endpoint yet; restart DSH.',
+      tabCleanup: 'Cleanup',
+      cleanupTitle: 'Cleanup',
+      cleanupHint: 'Invalidation only — nothing is deleted, everything is restorable',
+      cleanupRescan: 'Rescan',
+      cleanupScanning: 'Scanning…',
+      cleanupScanned: 'Scanned {scanned} / {total}',
+      cleanupTruncated: ' (newest {scanned} only)',
+      cleanupDuplicates: 'Near-duplicates',
+      cleanupStale: 'Untouched',
+      cleanupForgotten: 'Forgotten',
+      cleanupGroups: ' groups',
+      cleanupDays: 'd',
+      cleanupEmptyDup: 'No highly similar memories found.',
+      cleanupEmptyStale: 'Nothing untouched for over {days} days.',
+      cleanupEmptyForgotten: 'Nothing invalidated yet.',
+      cleanupSelectAll: 'Select all',
+      cleanupClear: 'Clear',
+      cleanupInvalidate: 'Invalidate selected ({n})',
+      cleanupRestore: 'Restore selected ({n})',
+      cleanupReason: 'Reason',
+      cleanupReasonPlaceholder: 'e.g. duplicate, outdated, imported by mistake',
+      cleanupLimit: 'Batch limit',
+      cleanupNext: 'Continue',
+      cleanupBack: 'Back',
+      cleanupCancel: 'Cancel',
+      cleanupConfirmTitle: 'Invalidate {n} memories?',
+      cleanupConfirmBody: 'They disappear from recall, the graph and consolidation, but can be restored from Forgotten.',
+      cleanupConfirm: 'Confirm',
+      cleanupWorking: 'Working…',
+      cleanupResult: '{ok} succeeded, {failed} failed',
+      cleanupReasonRequired: 'A reason is required',
+      cleanupOverLimit: '{n} selected, over the batch limit of {limit}',
+      cleanupObservation: 'Observations are derived and cannot be invalidated',
+      cleanupOpen: 'Open cleanup',
+      cleanupPending: 'Pending cleanup',
+      cleanupScanFailed: 'Scan failed',
       provider: 'Extraction model',
       cache: 'Cache location',
       systemDefault: 'system default',
@@ -749,6 +821,9 @@ window.__ModuleLoader__.load({
       const [bankConfigBusy, setBankConfigBusy] = useState(false);
       const [bankConfigMessage, setBankConfigMessage] = useState(null);
       const [extrasMissing, setExtrasMissing] = useState(false);
+      const [cleanup, setCleanup] = useState(null);
+      const [cleanupLoading, setCleanupLoading] = useState(false);
+      const [staleDays, setStaleDays] = useState(90);
       const [query, setQuery] = useState('');
       const [results, setResults] = useState(null);
       const [searching, setSearching] = useState(false);
@@ -863,6 +938,21 @@ window.__ModuleLoader__.load({
         }
       }, []);
 
+      const loadCleanup = useCallback(async () => {
+        setCleanupLoading(true);
+        try {
+          const res = await fetch(`${API}/cleanup?staleDays=${staleDays}&scan=800`, { cache: 'no-store' });
+          const body = await res.json().catch(() => ({}));
+          if (!alive.current) return;
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          setCleanup(body);
+        } catch (error) {
+          if (alive.current) setCleanup({ error: error.message ?? String(error) });
+        } finally {
+          if (alive.current) setCleanupLoading(false);
+        }
+      }, [staleDays]);
+
       const loadDocuments = useCallback(async () => {
         try {
           const res = await fetch(`${API}/documents?limit=20`, { cache: 'no-store' });
@@ -899,11 +989,13 @@ window.__ModuleLoader__.load({
         if (!data?.running) {
           setHealth(null);
           setBankConfig(null);
+          setCleanup(null);
           return;
         }
         loadHealth();
         loadBankConfig();
-      }, [data?.running, data?.bank, loadHealth, loadBankConfig]);
+        loadCleanup();
+      }, [data?.running, data?.bank, loadHealth, loadBankConfig, loadCleanup]);
 
       useEffect(() => {
         if (data?.running) loadDocuments();
@@ -1324,10 +1416,21 @@ window.__ModuleLoader__.load({
             { style: { display: 'flex', gap: 2, borderBottom: `1px solid ${C.border}`, marginTop: 2 } },
             h(ViewTab, { active: view === 'overview', onClick: () => setView('overview') }, t('tabOverview')),
             h(ViewTab, { active: view === 'graph', onClick: () => setView('graph') }, t('tabGraph')),
+            h(ViewTab, { active: view === 'cleanup', onClick: () => setView('cleanup') }, t('tabCleanup')),
           ),
 
           view === 'graph'
             ? h(GraphPanel, { t, running, bank: data?.bank ?? null })
+            : view === 'cleanup'
+              ? h(CleanupPanel, {
+                  t,
+                  running,
+                  data: cleanup,
+                  loading: cleanupLoading,
+                  staleDays,
+                  onChangeStaleDays: setStaleDays,
+                  onRefresh: loadCleanup,
+                })
             : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 } },
               // quick start / setup
               h(
@@ -1775,6 +1878,22 @@ window.__ModuleLoader__.load({
                             Row,
                             { label: t('pendingOps') },
                             `${fmt(health.stats?.pending_operations ?? 0)} / ${t('failedOps')} ${fmt(health.stats?.failed_operations ?? 0)}`,
+                          ),
+                          h(
+                            Row,
+                            { label: t('cleanupPending') },
+                            cleanupLoading && cleanup === null
+                              ? h('span', { style: { fontSize: 11.5, color: C.text3 } }, t('cleanupScanning'))
+                              : cleanup && cleanup.error === undefined
+                                ? h(
+                                    'div',
+                                    { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 11.5, color: C.text2 } },
+                                    h('span', null, `${t('cleanupForgotten')} ${fmt(cleanup.counts?.invalidated ?? 0)}`),
+                                    h('span', null, `${t('cleanupDuplicates')} ${fmt(cleanup.counts?.duplicateGroups ?? 0)}`),
+                                    h('span', null, `${t('cleanupStale')} ${fmt(cleanup.counts?.stale ?? 0)}`),
+                                    h(Button, { onClick: () => setView('cleanup') }, t('cleanupOpen')),
+                                  )
+                                : h('span', { style: { fontSize: 11.5, color: C.text3 } }, '—'),
                           ),
                           h(
                             Row,
@@ -2832,6 +2951,339 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function CleanupPanel(props) {
+      const t = typeof props?.t === 'function' ? props.t : fallbackT;
+      const running = props?.running === true;
+      const data = props?.data ?? null;
+      const loading = props?.loading === true;
+      const staleDays = props?.staleDays ?? 90;
+      const [filter, setFilter] = useState('duplicates');
+      const [selected, setSelected] = useState(() => new Set());
+      const [step, setStep] = useState(0);
+      const [reason, setReason] = useState('重复或过时（面板清理）');
+      const [limit, setLimit] = useState(100);
+      const [busy, setBusy] = useState(false);
+      const [result, setResult] = useState(null);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        setSelected(new Set());
+        setStep(0);
+        setResult(null);
+        setError(null);
+      }, [filter, data?.staleDays]);
+
+      const selectStyle = {
+        border: `1px solid ${C.border2}`,
+        background: C.base,
+        color: C.text,
+        borderRadius: 7,
+        padding: '3px 6px',
+        fontSize: 11.5,
+      };
+
+      if (!running) {
+        return h(Card, null, h('div', { style: { fontSize: 12, color: C.text3 } }, t('downHint')));
+      }
+      if (!data) {
+        return h(
+          Card,
+          null,
+          h('div', { style: { fontSize: 12, color: C.text3 } }, loading ? t('cleanupScanning') : t('stateUnknown')),
+        );
+      }
+      if (data.error !== undefined) {
+        return h(
+          Card,
+          null,
+          h('div', { style: { fontSize: 12, color: C.err } }, `${t('cleanupScanFailed')}: ${data.error}`),
+          h('div', { style: { marginTop: 8 } }, h(Button, { onClick: props?.onRefresh, busy: loading }, t('cleanupRescan'))),
+        );
+      }
+
+      const counts = data.counts ?? {};
+      const duplicates = Array.isArray(data.duplicates) ? data.duplicates : [];
+      const stale = Array.isArray(data.stale) ? data.stale : [];
+      const forgotten = Array.isArray(data.forgotten) ? data.forgotten : [];
+      const rows = filter === 'duplicates' ? duplicates.flat() : filter === 'stale' ? stale : forgotten;
+      const actionable = (item) => (filter === 'forgotten' ? true : item.factType !== 'observation');
+      const pickableIds = rows.filter(actionable).map((item) => item.id);
+      const allPicked = pickableIds.length > 0 && pickableIds.every((id) => selected.has(id));
+
+      const toggle = (id) => {
+        setSelected((current) => {
+          const next = new Set(current);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+        setStep(0);
+      };
+      const toggleAll = () => {
+        setSelected(allPicked ? new Set() : new Set(pickableIds));
+        setStep(0);
+      };
+
+      const execute = async (action) => {
+        const ids = [...selected];
+        if (ids.length === 0) return;
+        if (action === 'invalidate') {
+          if (reason.trim() === '') {
+            setError(t('cleanupReasonRequired'));
+            return;
+          }
+          if (ids.length > limit) {
+            setError(fill(t('cleanupOverLimit'), { n: ids.length, limit }));
+            return;
+          }
+        }
+        setBusy(true);
+        setError(null);
+        try {
+          const res = await fetch(`${API}/memories/action`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify({ action, ids, reason: reason.trim() }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          setResult(body);
+          setSelected(new Set());
+          setStep(0);
+          props?.onRefresh?.();
+        } catch (runError) {
+          setError(runError.message ?? String(runError));
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      const chip = (key, label) =>
+        h(
+          'button',
+          {
+            type: 'button',
+            onClick: () => setFilter(key),
+            style: {
+              appearance: 'none',
+              border: `1px solid ${filter === key ? C.border2 : C.border}`,
+              background: filter === key ? C.surface2 : 'transparent',
+              color: filter === key ? C.text : C.text3,
+              borderRadius: 999,
+              padding: '3px 11px',
+              fontSize: 11.5,
+              cursor: 'pointer',
+            },
+          },
+          label,
+        );
+
+      const row = (item) => {
+        const canPick = actionable(item);
+        const checked = selected.has(item.id);
+        return h(
+          'label',
+          {
+            key: item.id,
+            style: {
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-start',
+              padding: '7px 4px',
+              borderBottom: `1px solid ${C.border}`,
+              cursor: canPick ? 'pointer' : 'not-allowed',
+              opacity: canPick ? 1 : 0.55,
+            },
+          },
+          h('input', {
+            type: 'checkbox',
+            checked,
+            disabled: !canPick,
+            onChange: () => toggle(item.id),
+            style: { width: 14, height: 14, marginTop: 3, cursor: canPick ? 'pointer' : 'not-allowed' },
+          }),
+          h(
+            'div',
+            { style: { flex: 1, minWidth: 0 } },
+            h(
+              'div',
+              { style: { fontSize: 11.5, color: C.text2, lineHeight: 1.45, wordBreak: 'break-word' } },
+              item.text.length > 140 ? `${item.text.slice(0, 140)}…` : item.text,
+            ),
+            h(
+              'div',
+              { style: { fontSize: 10, color: C.text3, marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' } },
+              h('span', null, item.factType),
+              h('span', null, shortDate(item.date)),
+              filter === 'forgotten' && item.invalidatedAt ? h('span', null, `${t('cleanupForgotten')} · ${shortDate(item.invalidatedAt)}`) : null,
+              filter === 'forgotten' && item.reason ? h('span', null, item.reason) : null,
+              item.factType === 'observation' ? h('span', { style: { color: C.warn } }, t('cleanupObservation')) : null,
+            ),
+          ),
+        );
+      };
+
+      let listBody;
+      if (rows.length === 0) {
+        listBody = h(
+          'div',
+          { style: { fontSize: 11.5, color: C.text3, padding: '12px 0' } },
+          filter === 'duplicates'
+            ? t('cleanupEmptyDup')
+            : filter === 'stale'
+              ? fill(t('cleanupEmptyStale'), { days: staleDays })
+              : t('cleanupEmptyForgotten'),
+        );
+      } else if (filter === 'duplicates') {
+        listBody = h(
+          'div',
+          null,
+          ...duplicates.map((group, index) =>
+            h(
+              'div',
+              { key: `g${index}`, style: { marginTop: index === 0 ? 0 : 8 } },
+              h('div', { style: { fontSize: 10, color: C.text3, padding: '4px 4px 0' } }, `${index + 1} · ${group.length}`),
+              ...group.map(row),
+            ),
+          ),
+        );
+      } else {
+        listBody = h('div', null, ...rows.map(row));
+      }
+
+      return h(
+        Card,
+        { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+          h('div', { style: { fontSize: 13, fontWeight: 600, color: C.text } }, t('cleanupTitle')),
+          h('div', { style: { fontSize: 11, color: C.text3 } }, t('cleanupHint')),
+          h('span', { style: { flex: 1 } }),
+          h(
+            'select',
+            {
+              value: staleDays,
+              onChange: (event) => props?.onChangeStaleDays?.(Number(event.target.value)),
+              style: selectStyle,
+              title: t('cleanupStale'),
+            },
+            [30, 90, 180, 365].map((days) => h('option', { key: days, value: days }, `${days} ${t('cleanupDays')}`)),
+          ),
+          h(Button, { onClick: props?.onRefresh, busy: loading }, loading ? t('cleanupScanning') : t('cleanupRescan')),
+        ),
+        h(
+          'div',
+          { style: { fontSize: 10.5, color: C.text3 } },
+          `${fill(t('cleanupScanned'), { scanned: fmt(data.scanned), total: fmt(data.total) })}${data.truncated ? fill(t('cleanupTruncated'), { scanned: fmt(data.scanned) }) : ''}`,
+        ),
+        h(
+          'div',
+          { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+          chip('duplicates', `${t('cleanupDuplicates')} ${fmt(counts.duplicateGroups ?? 0)}${t('cleanupGroups')}`),
+          chip('stale', `${t('cleanupStale')} ${fmt(counts.stale ?? 0)}`),
+          chip('forgotten', `${t('cleanupForgotten')} ${fmt(counts.invalidated ?? 0)}`),
+        ),
+        h(
+          'div',
+          {
+            style: {
+              maxHeight: 360,
+              overflowY: 'auto',
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              padding: '2px 8px',
+            },
+          },
+          listBody,
+        ),
+        rows.length > 0
+          ? h(
+              'div',
+              { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+              h('button', { type: 'button', onClick: toggleAll, style: { appearance: 'none', border: 'none', background: 'transparent', color: C.text2, fontSize: 11.5, cursor: 'pointer', padding: 0 } }, allPicked ? t('cleanupClear') : t('cleanupSelectAll')),
+              selected.size > 0
+                ? h('span', { style: { fontSize: 11, color: C.text3 } }, String(selected.size))
+                : null,
+            )
+          : null,
+        result
+          ? h(
+              'div',
+              { style: { fontSize: 11.5, color: result.failed > 0 ? C.warn : C.ok } },
+              fill(t('cleanupResult'), { ok: fmt(result.succeeded ?? 0), failed: fmt(result.failed ?? 0) }),
+            )
+          : null,
+        error ? h('div', { style: { fontSize: 11.5, color: C.err } }, error) : null,
+        filter === 'forgotten'
+          ? h(
+              'div',
+              null,
+              h(
+                Button,
+                { onClick: () => execute('restore'), disabled: selected.size === 0, busy },
+                busy ? t('cleanupWorking') : fill(t('cleanupRestore'), { n: selected.size }),
+              ),
+            )
+          : step === 0
+            ? h(
+                'div',
+                null,
+                h(
+                  Button,
+                  { onClick: () => setStep(1), disabled: selected.size === 0 },
+                  fill(t('cleanupInvalidate'), { n: selected.size }),
+                ),
+              )
+            : step === 1
+              ? h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 8, borderTop: `1px solid ${C.border}`, paddingTop: 10 } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 11.5, color: C.text2 } },
+                    h('span', null, t('cleanupReason')),
+                    h('input', {
+                      type: 'text',
+                      value: reason,
+                      maxLength: 200,
+                      onChange: (event) => setReason(event.target.value),
+                      placeholder: t('cleanupReasonPlaceholder'),
+                      style: { ...inputStyle, flex: '1 1 240px', padding: '5px 9px', fontSize: 11.5 },
+                    }),
+                    h('span', null, t('cleanupLimit')),
+                    h('input', {
+                      type: 'number',
+                      min: 1,
+                      max: 500,
+                      value: limit,
+                      onChange: (event) => setLimit(Math.min(500, Math.max(1, Number(event.target.value) || 1))),
+                      style: { ...inputStyle, width: 80, flex: 'none', padding: '5px 9px', fontSize: 11.5 },
+                    }),
+                  ),
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: 8 } },
+                    h(Button, { onClick: () => setStep(2), disabled: selected.size === 0 || selected.size > limit }, t('cleanupNext')),
+                    h(Button, { onClick: () => setStep(0) }, t('cleanupCancel')),
+                  ),
+                )
+              : h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 8, borderTop: `1px solid ${C.border}`, paddingTop: 10 } },
+                  h('div', { style: { fontSize: 12, fontWeight: 600, color: C.text } }, fill(t('cleanupConfirmTitle'), { n: selected.size })),
+                  h('div', { style: { fontSize: 11.5, color: C.text3 } }, t('cleanupConfirmBody')),
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: 8 } },
+                    h(Button, { onClick: () => execute('invalidate'), busy, primary: true }, busy ? t('cleanupWorking') : t('cleanupConfirm')),
+                    h(Button, { onClick: () => setStep(1), disabled: busy }, t('cleanupBack')),
+                  ),
+                ),
+      );
+    }
+
     function GraphPanel(props) {
       const t = typeof props?.t === 'function' ? props.t : fallbackT;
       const running = props?.running === true;
@@ -3650,7 +4102,7 @@ window.__ModuleLoader__.load({
       apply,
       // Render handles for the smoke test; the module loader only reads
       // name/inject/apply, so these are inert in the real host.
-      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout },
+      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout, CleanupPanel },
     };
   },
 });

@@ -254,6 +254,43 @@ if (typeof handles.GraphCanvas !== 'function') {
   }
 }
 
+// ── the cleanup panel renders its list ─────────────────────────────────────
+if (typeof handles.CleanupPanel !== 'function') {
+  note('CleanupPanel is not exported for the test');
+} else {
+  try {
+    const item = (id, text, factType) => ({ id, text, factType, date: '2026-10-01T00:00:00Z' });
+    const tree = handles.CleanupPanel({
+      t: (key) => key,
+      running: true,
+      loading: false,
+      staleDays: 90,
+      onChangeStaleDays() {},
+      onRefresh() {},
+      data: {
+        scanned: 12,
+        total: 12,
+        truncated: false,
+        staleDays: 90,
+        counts: { invalidated: 1, duplicateGroups: 1, duplicateItems: 2, stale: 1 },
+        duplicates: [[item('a', '相同的记忆内容在这里', 'experience'), item('b', '相同的记忆内容在这里', 'experience')]],
+        stale: [item('c', '很久没有变动的记忆内容', 'world')],
+        forgotten: [{ ...item('d', '已经失效的记忆', 'experience'), invalidatedAt: '2026-10-02T00:00:00Z', reason: 'dup' }],
+      },
+    });
+    let checkboxes = 0;
+    (function walk(node) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (node.type === 'input' && node.props?.type === 'checkbox') checkboxes += 1;
+      (node.children ?? []).forEach(walk);
+    })(tree);
+    if (checkboxes !== 2) note(`cleanup panel drew ${checkboxes} duplicate rows, expected 2`);
+  } catch (error) {
+    note(`CleanupPanel threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
+  }
+}
+
 // ── render once with the fallback translator ─────────────────────────────────
 function renderCase() {
   seen.length = 0;

@@ -123,6 +123,8 @@ const expected = [
   '/hindsight-manager/api/entity',
   '/hindsight-manager/api/banks',
   '/hindsight-manager/api/health',
+  '/hindsight-manager/api/cleanup',
+  '/hindsight-manager/api/memories/action',
   '/hindsight-manager/api/health/probe',
   '/hindsight-manager/api/bank-config',
   '/hindsight-manager/api/search',
@@ -323,6 +325,38 @@ if (budgetOk) {
   const written = JSON.parse(readFileSync(join(home, 'storages', 'dsh-hindsight-manager', 'config.json'), 'utf8'));
   if (written.searchBudget !== 'high') note(`searchBudget not persisted: ${JSON.stringify(written)}`);
 }
+
+// ── cleanup scan and bulk actions ───────────────────────────────────────────
+const cleanupCall = await call('/hindsight-manager/api/cleanup?staleDays=90&scan=200');
+if (cleanupCall) {
+  if (cleanupCall.status === 200) {
+    if (!cleanupCall.json?.counts) note('cleanup payload has no counts');
+    if (!Array.isArray(cleanupCall.json?.duplicates)) note('cleanup payload has no duplicates array');
+    if (!Array.isArray(cleanupCall.json?.forgotten)) note('cleanup payload has no forgotten array');
+  } else if (cleanupCall.status === 500) {
+    if (cleanupCall.json?.ok !== false) note('cleanup failure body is not ok:false');
+  } else {
+    note(`cleanup status = ${cleanupCall.status}`);
+  }
+}
+
+const actionUnknown = await call('/hindsight-manager/api/memories/action', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'nuke', ids: ['x'] }),
+});
+if (actionUnknown && actionUnknown.status !== 400) note(`action unknown status = ${actionUnknown.status}`);
+
+const actionNoReason = await call('/hindsight-manager/api/memories/action', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'invalidate', ids: ['x'] }),
+});
+if (actionNoReason && actionNoReason.status !== 400) note(`action no reason status = ${actionNoReason.status}`);
+
+const actionEmpty = await call('/hindsight-manager/api/memories/action', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'invalidate', ids: [], reason: 'dup' }),
+});
+if (actionEmpty && actionEmpty.status !== 400) note(`action empty ids status = ${actionEmpty.status}`);
 
 // ── search: an empty query is a client error, not a crash ────────────────────
 const searchEmpty = await call('/hindsight-manager/api/search', { method: 'POST', body: JSON.stringify({}) });
