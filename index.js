@@ -1,20 +1,24 @@
 /**
  * dsh-hindsight-manager — Host half.
  *
- * Owns the local Hindsight daemon's whole lifecycle and serves the panel API.
- * It is deliberately self-contained: it spawns `hindsight-embed` itself instead
- * of driving another plugin's launcher, so nothing breaks when that plugin is
- * upgraded, renamed, or removed.
+ * Owns a local Hindsight memory daemon's whole lifecycle and serves the panel
+ * API. It is deliberately self-contained: it spawns `hindsight-embed` itself
+ * instead of driving another plugin's launcher, so nothing breaks when that
+ * plugin is upgraded, renamed, or removed.
  *
  * Responsibilities
+ *   - guided setup: check/install the memory integration, store the LLM key,
+ *     pin the daemon port, choose the cache directory
  *   - start / stop the daemon, with the LLM and cache environment it needs
+ *   - retry a failed start (network/proxy hiccups) instead of giving up
  *   - one watchdog that stops the daemon when this Harness process exits
  *   - read the daemon's own log to explain a failed start instead of hanging
  *   - /hindsight-manager/api/* for the panel
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import net from 'node:net';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,13 +26,13 @@ import { fileURLToPath } from 'node:url';
 export const name = 'hindsight-manager';
 
 const PLUGIN = 'dsh-hindsight-manager';
-/** Daemon port. `hindsight-embed`'s own default profile port; kept identical so
- *  an existing daemon started by hand is adopted rather than duplicated. */
-const DAEMON_PORT = 9077;
-const DAEMON_BASE = `http://127.0.0.1:${DAEMON_PORT}`;
+/** Daemon port. `hindsight-embed`'s own default profile port; pinned into the
+ *  profile env so the manager and the memory integration agree on it. */
+const DEFAULT_DAEMON_PORT = 9077;
 const PROFILE = 'coding-agent';
 const BANK_PREFIX = 'coding-agent::';
 const DEFAULT_LLM_MODEL = 'deepseek-flash';
+const INTEGRATION_PACKAGE = '@vectorize-io/hindsight-coding-agents';
 
 const QUICK_TIMEOUT_MS = 8000;
 /** Recall reranks on CPU over the whole bank; measured ~10 s at 280 facts and it
@@ -38,17 +42,26 @@ const BANK_CACHE_MS = 60_000;
 
 const READY_POLL_MS = 2000;
 const READY_TIMEOUT_MS = 6 * 60 * 1000;
+/** Backoff for restarting a daemon whose start failed transiently (network,
+ *  proxy, another process still holding the port). */
+const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000, 120000, 300000];
 
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
 
 // ── paths ─────────────────────────────────────────────────────────────────────
 
 const dshHome = () => process.env.DSH_HOME ?? join(homedir(), '.dsh');
+const profileName = () => (process.env.DSH_PROFILE ?? 'desktop').trim() || 'desktop';
+const profileDir = () => join(dshHome(), 'profiles', profileName());
 const stateDir = () => join(dshHome(), 'storages', PLUGIN);
 const configFile = () => join(stateDir(), 'config.json');
 const hindsightHome = () => join(homedir(), '.hindsight');
 const hindsightConfigFile = () => join(hindsightHome(), 'coding-agent.json');
 const daemonLogFile = () => join(hindsightHome(), 'profiles', `${PROFILE}.log`);
+const profileEnvFile = () => join(hindsightHome(), 'profiles', `${PROFILE}.env`);
+
+let daemonPort = DEFAULT_DAEMON_PORT;
+const daemonBase = () => `http://127.0.0.1:${daemonPort}`;
 
 // ── tiny helpers ──────────────────────────────────────────────────────────────
 
@@ -106,12 +119,84 @@ function readTextFile(path) {
   }
 }
 
+function readJsonFile(path) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function fileSize(path) {
   try {
     return statSync(path).size;
   } catch {
     return 0;
   }
+}
+
+/** Parse a dotenv file into a plain object; comments and `export ` are accepted. */
+function readEnvFile(path) {
+  const text = readTextFile(path);
+  const out = {};
+  if (!text) return out;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#')) continue;
+    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (match === null) continue;
+    let value = match[2].trim();
+    if (
+      value.length >= 2 &&
+      (value[0] === '"' || value[0] === "'") &&
+      value[value.length - 1] === value[0]
+    ) {
+      value = value.slice(1, -1);
+    }
+    out[match[1]] = value;
+  }
+  return out;
+}
+
+/** Merge `patch` into a dotenv file, keeping comments and every other line. */
+function writeEnvFile(path, patch) {
+  const existing = (readTextFile(path) ?? '').split(/\r?\n/);
+  const keys = new Set(Object.keys(patch));
+  const seen = new Set();
+  const lines = existing.map((line) => {
+    const match = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$/.exec(line);
+    if (match === null || !keys.has(match[2])) return line;
+    seen.add(match[2]);
+    return `${match[1]}${match[2]}=${patch[match[2]]}`;
+  });
+  for (const key of keys) {
+    if (!seen.has(key)) lines.push(`${key}=${patch[key]}`);
+  }
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${lines.join('\n')}\n`, 'utf8');
+}
+
+// ── daemon port ───────────────────────────────────────────────────────────────
+
+/** Read the profile's pinned port, falling back to the default. */
+function refreshDaemonPort() {
+  const pinned = Number(readEnvFile(profileEnvFile()).HINDSIGHT_API_PORT);
+  daemonPort = Number.isInteger(pinned) && pinned > 0 ? pinned : DEFAULT_DAEMON_PORT;
+  return daemonPort;
+}
+
+/**
+ * Pin the port into the profile env. `hindsight-embed` 1.x otherwise allocates a
+ * free port on every start, which the manager (and the memory integration) would
+ * never find again.
+ */
+function pinDaemonPort() {
+  const env = readEnvFile(profileEnvFile());
+  if (env.HINDSIGHT_API_PORT === undefined) {
+    writeEnvFile(profileEnvFile(), { HINDSIGHT_API_PORT: String(DEFAULT_DAEMON_PORT) });
+  }
+  return refreshDaemonPort();
 }
 
 // ── plugin config ─────────────────────────────────────────────────────────────
@@ -137,14 +222,78 @@ async function saveConfig(patch) {
   return next;
 }
 
+// ── network / proxy ───────────────────────────────────────────────────────────
+
+/**
+ * The WinINET proxy, when one is configured. Python's urllib and httpx read it
+ * through the registry (unlike curl), so a stale proxy breaks the daemon even
+ * while the rest of the machine reaches the API.
+ */
+function systemProxyServer() {
+  if (process.platform !== 'win32') return null;
+  try {
+    const out = execFileSync(
+      'reg',
+      [
+        'query',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        '/v',
+        'ProxyServer',
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    const match = /ProxyServer\s+REG_SZ\s+(.+)/i.exec(out);
+    return match === null ? null : match[1].trim();
+  } catch {
+    return null;
+  }
+}
+
+function proxyReachable(server) {
+  return new Promise((resolvePromise) => {
+    const first = String(server).split(';')[0].trim().replace(/^https?:\/\//i, '');
+    const split = first.lastIndexOf(':');
+    if (split <= 0) return resolvePromise(true);
+    const host = first.slice(0, split);
+    const port = Number(first.slice(split + 1));
+    if (!Number.isInteger(port) || port <= 0) return resolvePromise(true);
+    const socket = net.connect({ host, port });
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolvePromise(ok);
+    };
+    socket.setTimeout(800);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
+/** Whether the daemon must bypass the system proxy to reach anything. */
+async function networkState() {
+  const proxy = systemProxyServer();
+  const reachable = proxy === null ? null : await proxyReachable(proxy);
+  return {
+    systemProxy: proxy,
+    proxyReachable: reachable,
+    bypassProxy: proxy !== null && reachable === false,
+  };
+}
+
 // ── credentials ───────────────────────────────────────────────────────────────
 
 /**
- * Fact extraction needs an LLM. Order: the Harness credential service, then the
- * environment (both the Hindsight-specific name and the generic one), so a user
- * who configured either path is not asked twice.
+ * Fact extraction needs an LLM. Order: the key saved through this panel, the
+ * Harness credential service, then the environment (both the Hindsight-specific
+ * name and the generic one), so a user who configured either path is not asked
+ * twice.
  */
 async function resolveApiKey(ctx) {
+  const fromProfile = readEnvFile(profileEnvFile()).HINDSIGHT_API_LLM_API_KEY?.trim();
+  if (fromProfile) return fromProfile;
   try {
     const credentials = ctx.get('credentials');
     if (credentials !== undefined) {
@@ -159,6 +308,23 @@ async function resolveApiKey(ctx) {
     process.env.DEEPSEEK_API_KEY?.trim() ||
     undefined
   );
+}
+
+async function apiKeyStatus(ctx) {
+  if (readEnvFile(profileEnvFile()).HINDSIGHT_API_LLM_API_KEY?.trim()) {
+    return { configured: true, source: 'panel' };
+  }
+  try {
+    const credentials = ctx.get('credentials');
+    const hit = await credentials?.resolve?.('DEEPSEEK_API_KEY');
+    if (hit !== undefined && hit !== null) return { configured: true, source: 'harness' };
+  } catch {
+    // ignore
+  }
+  if (process.env.HINDSIGHT_API_LLM_API_KEY?.trim() || process.env.DEEPSEEK_API_KEY?.trim()) {
+    return { configured: true, source: 'environment' };
+  }
+  return { configured: false, source: null };
 }
 
 // ── memory bank resolution ────────────────────────────────────────────────────
@@ -180,7 +346,109 @@ function derivedBank(cwd = process.cwd()) {
   return `${BANK_PREFIX}${basename(cwd)}`;
 }
 
-const bankUrl = (bank, path) => `${DAEMON_BASE}/v1/default/banks/${encodeURIComponent(bank)}${path}`;
+const bankUrl = (bank, path) => `${daemonBase()}/v1/default/banks/${encodeURIComponent(bank)}${path}`;
+
+// ── integration / setup ───────────────────────────────────────────────────────
+
+function integrationStatus() {
+  const pkg = readJsonFile(join(profileDir(), 'package.json'));
+  const declared = pkg?.dependencies?.[INTEGRATION_PACKAGE] ?? null;
+  const bundles = Array.isArray(pkg?.dsh?.profile?.bundles) ? pkg.dsh.profile.bundles : [];
+  const version =
+    readJsonFile(join(profileDir(), 'node_modules', INTEGRATION_PACKAGE, 'package.json'))?.version ??
+    (typeof declared === 'string' ? declared : null);
+  return {
+    package: INTEGRATION_PACKAGE,
+    installed: typeof declared === 'string',
+    enabled: bundles.includes(INTEGRATION_PACKAGE),
+    version,
+  };
+}
+
+function modelsStatus() {
+  const hub = join(hindsightHome(), 'hf-models', 'hub');
+  const has = (name) => existsSync(join(hub, name));
+  return {
+    dir: hub,
+    embeddings: has('models--BAAI--bge-small-en-v1.5'),
+    reranker: has('models--cross-encoder--ms-marco-MiniLM-L-6-v2'),
+  };
+}
+
+/** Where the bundled `dsh` CLI lives for the Desktop installation. */
+function desktopCli() {
+  if (process.platform === 'win32') {
+    const js = join(
+      dirname(process.execPath),
+      'resources',
+      'app.asar',
+      'dsh',
+      'node_modules',
+      '@deepseek-ai',
+      'dsh-desktop-host',
+      'lib',
+      'cli.js',
+    );
+    if (existsSync(js)) {
+      return {
+        command: process.execPath,
+        args: ['--expose-internals', js],
+        env: { ELECTRON_RUN_AS_NODE: '1' },
+      };
+    }
+  }
+  return { command: 'dsh', args: [], env: {} };
+}
+
+const installState = {
+  running: false,
+  startedAt: 0,
+  ok: null,
+  output: '',
+  error: null,
+};
+
+/**
+ * Install the memory integration into this profile in the background. A full
+ * profile recomposition may follow, so the caller must not wait for it.
+ */
+function startIntegrationInstall() {
+  if (installState.running) return { ok: true, started: true, already: true };
+  const cli = desktopCli();
+  const args = [...cli.args, 'plugin', '--profile', profileName(), 'add', INTEGRATION_PACKAGE];
+  installState.running = true;
+  installState.startedAt = Date.now();
+  installState.ok = null;
+  installState.output = '';
+  installState.error = null;
+  try {
+    const child = spawn(cli.command, args, {
+      windowsHide: true,
+      env: { ...process.env, ...cli.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const append = (chunk) => {
+      installState.output = `${installState.output}${chunk}`.slice(-8000);
+    };
+    child.stdout?.on('data', append);
+    child.stderr?.on('data', append);
+    child.on('error', (error) => {
+      installState.running = false;
+      installState.ok = false;
+      installState.error = error?.message ?? String(error);
+    });
+    child.on('exit', (code) => {
+      installState.running = false;
+      installState.ok = code === 0;
+      if (code !== 0) installState.error = `exit code ${code}`;
+    });
+  } catch (error) {
+    installState.running = false;
+    installState.ok = false;
+    installState.error = error?.message ?? String(error);
+  }
+  return { ok: true, started: true };
+}
 
 // ── daemon state ──────────────────────────────────────────────────────────────
 
@@ -192,14 +460,23 @@ function createDaemon() {
     startedAt: 0,
     logOffset: 0,
     lastFailure: null,
+    lastNetwork: null,
     watchdog: false,
     monitor: null,
+    supervisor: null,
     lastEnv: null,
+    wantRunning: false,
+    everUp: false,
+    attempt: 0,
+    retryAt: 0,
+    retryTimer: null,
+    ctx: null,
+    config: null,
   };
 
   async function health() {
     try {
-      return await fetchJson(`${DAEMON_BASE}/health`);
+      return await fetchJson(`${daemonBase()}/health`, undefined, 3000);
     } catch {
       return null;
     }
@@ -217,17 +494,29 @@ function createDaemon() {
     if (fresh.trim() === '') return null;
     const bad = fresh
       .split(/\r?\n/)
-      .filter((line) =>
-        /(traceback|ValueError|RuntimeError|SystemError|Error:|error:|failed|not allowed|address already in use|No such file|cannot|拒绝)/i.test(
-          line,
-        ),
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          /^\s*Traceback/.test(line) ||
+          /\s-\s(ERROR|CRITICAL)\s-\s/.test(line) ||
+          /Application startup failed/i.test(line) ||
+          /LLM API key is required/i.test(line) ||
+          /address already in use/i.test(line) ||
+          /did not complete within \d+s/i.test(line),
       );
     if (bad.length === 0) return null;
     // The final error line is the actionable one; the traceback above it is noise.
-    return bad[bad.length - 1].trim().slice(0, 400);
+    return bad[bad.length - 1].slice(0, 400);
   }
 
-  function env(apiKey, config) {
+  /** Did this start's log ever reach a serving state (covers a fast kill)? */
+  function logSaysUp() {
+    const current = readTextFile(daemonLogFile());
+    if (!current) return false;
+    return /Application startup complete|Uvicorn running on/i.test(current.slice(state.logOffset));
+  }
+
+  function env(apiKey, config, bypassProxy) {
     const next = {
       ...process.env,
       // Windows builds default to a legacy code page; the CLI decodes its own
@@ -240,14 +529,18 @@ function createDaemon() {
       HINDSIGHT_API_LLM_REASONING_EFFORT: process.env.HINDSIGHT_API_LLM_REASONING_EFFORT?.trim() || 'none',
     };
     if (apiKey) next.HINDSIGHT_API_LLM_API_KEY = apiKey;
+    if (bypassProxy) {
+      // A configured-but-dead system proxy makes Python refuse every request.
+      // Direct is then the only working path for the daemon.
+      next.NO_PROXY = '*';
+      next.no_proxy = '*';
+    }
     if (config.installDir) {
       const cacheDir = join(config.installDir, 'uv-cache');
       const modelDir = join(config.installDir, 'hf-models');
       next.UV_CACHE_DIR = cacheDir;
       next.HF_HOME = modelDir;
       // Offline only when the relocated directories actually hold the payload.
-      // Asserting it on a fresh, empty directory is what turns a slow download
-      // into an unexplained failure.
       if (existsSync(join(cacheDir, 'archive-v0'))) {
         next.UV_OFFLINE = '1';
       }
@@ -264,35 +557,22 @@ function createDaemon() {
     const script = join(PLUGIN_DIR, 'lib', 'watchdog.mjs');
     if (!existsSync(script)) return;
     try {
-      const child = spawn('node', [script, '--ppid', String(process.ppid), '--port', String(DAEMON_PORT)], {
+      // Run it through the Electron binary in Node mode: a GUI executable, so
+      // no console window ever appears (plain `node.exe` is a console app).
+      const electron = basename(process.execPath).toLowerCase().includes('deepseek');
+      const args = [script, '--ppid', String(process.ppid), '--port', String(daemonPort)];
+      if (electron) args.unshift('--expose-internals');
+      const child = spawn(process.execPath, args, {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
-        // Detached: the watchdog must outlive this process to notice it dying.
-        env: process.env,
+        env: electron ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
       });
       child.on('error', () => {});
       child.unref();
       state.watchdog = true;
     } catch {
       // A missing watchdog only costs a lingering daemon, never correctness.
-    }
-  }
-
-  function hideWindows() {
-    if (process.platform !== 'win32') return;
-    const script = join(PLUGIN_DIR, 'lib', 'hide-window.ps1');
-    if (!existsSync(script)) return;
-    try {
-      const child = spawn(
-        'powershell',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
-        { detached: true, stdio: 'ignore', windowsHide: true },
-      );
-      child.on('error', () => {});
-      child.unref();
-    } catch {
-      // Cosmetic only.
     }
   }
 
@@ -305,7 +585,7 @@ function createDaemon() {
       }
     }
     // The daemon detaches from the starter, so the port is the reliable handle.
-    for (const pid of listeningPids(DAEMON_PORT)) {
+    for (const pid of listeningPids(daemonPort)) {
       try {
         execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
       } catch {
@@ -316,6 +596,43 @@ function createDaemon() {
     state.starting = false;
   }
 
+  function clearRetry() {
+    if (state.retryTimer) {
+      clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+    }
+    state.retryAt = 0;
+  }
+
+  function transientError(error) {
+    return /connection error|connecterror|refused|winerror|10060|10061|timed out|timeout|unreachable|network|econn|enotfound|proxy|address already in use|eaddrinuse/i.test(
+      String(error ?? ''),
+    );
+  }
+
+  /** Restart a failed start when the failure looks like a passing network issue. */
+  function scheduleRetry() {
+    if (!state.wantRunning || state.ctx === null) return;
+    if (!transientError(state.lastFailure?.error)) return;
+    if (state.attempt > RETRY_DELAYS_MS.length) return;
+    const delay = RETRY_DELAYS_MS[Math.min(state.attempt - 1, RETRY_DELAYS_MS.length - 1)];
+    clearRetry();
+    state.retryAt = Date.now() + delay;
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+      state.retryAt = 0;
+      if (!state.wantRunning || state.ctx === null) return;
+      void start(state.ctx, state.config);
+    }, delay);
+    if (typeof state.retryTimer.unref === 'function') state.retryTimer.unref();
+  }
+
+  function fail(error) {
+    state.starting = false;
+    state.lastFailure = { at: Date.now(), error: error.slice(0, 400) };
+    scheduleRetry();
+  }
+
   function ensureMonitor() {
     if (state.monitor) return;
     state.monitor = setInterval(async () => {
@@ -323,20 +640,39 @@ function createDaemon() {
       if (await running()) {
         state.starting = false;
         state.lastFailure = null;
+        state.attempt = 0;
+        state.everUp = true;
+        clearRetry();
         return;
       }
       const failure = failureFromLog();
       const timedOut = Date.now() - state.startedAt > READY_TIMEOUT_MS;
       if (failure || timedOut) {
         stopTree();
-        state.starting = false;
-        state.lastFailure = {
-          at: Date.now(),
-          error: failure ?? `The daemon did not become healthy within ${Math.round(READY_TIMEOUT_MS / 1000)}s.`,
-        };
+        fail(failure ?? `The daemon did not become healthy within ${Math.round(READY_TIMEOUT_MS / 1000)}s.`);
       }
     }, READY_POLL_MS);
     if (typeof state.monitor.unref === 'function') state.monitor.unref();
+  }
+
+  /**
+   * A daemon that died while nobody was looking would otherwise sit at
+   * "stopped" until the user notices. While the profile wants it running,
+   * check its health and bring it back when it vanished.
+   */
+  function ensureSupervisor() {
+    if (state.supervisor) return;
+    state.supervisor = setInterval(async () => {
+      if (!state.wantRunning || state.starting || state.retryAt > 0 || state.ctx === null) return;
+      // A failure before the daemon ever came up is a setup problem, not a
+      // vanished daemon; only transient ones deserve another automatic try.
+      if (state.lastFailure && !state.everUp && !transientError(state.lastFailure.error)) return;
+      if (await running()) return;
+      state.ctx.logger?.info?.(`${PLUGIN}: supervisor is restarting a daemon that vanished`);
+      state.attempt = state.attempt > 0 ? state.attempt : 1;
+      void start(state.ctx, state.config);
+    }, 15000);
+    if (typeof state.supervisor.unref === 'function') state.supervisor.unref();
   }
 
   /** Make sure ~/.hindsight/coding-agent.json points at a local daemon. */
@@ -355,57 +691,108 @@ function createDaemon() {
   }
 
   async function start(ctx, config) {
-    if (await running()) return { ok: true, status: 'running', already: true };
+    state.ctx = ctx;
+    state.config = config;
+    state.wantRunning = true;
+    pinDaemonPort();
+    if (await running()) {
+      state.attempt = 0;
+      clearRetry();
+      return { ok: true, status: 'running', already: true };
+    }
 
     const apiKey = await resolveApiKey(ctx);
     if (!apiKey) {
+      state.wantRunning = false;
       return {
         ok: false,
+        status: 'setup-required',
+        code: 'missing-key',
         error:
-          'Fact extraction needs an LLM key. Set HINDSIGHT_API_LLM_API_KEY (or DEEPSEEK_API_KEY) in your environment, or store DEEPSEEK_API_KEY in the Harness credentials.',
+          '还需要一个模型 API 密钥：在「快速开始」第 2 步填写，或在 Harness 凭据里保存 DEEPSEEK_API_KEY。',
       };
     }
 
     await ensureHindsightConfig();
 
+    const network = await networkState();
+    state.lastNetwork = network;
     state.logOffset = fileSize(daemonLogFile());
     // A local named `env` would shadow env() and throw "Cannot access 'env'
     // before initialization" — the same footgun as the old `health` local.
-    const childEnv = env(apiKey, config);
+    const childEnv = env(apiKey, config, network.bypassProxy);
     state.lastEnv = {
       provider: childEnv.HINDSIGHT_API_LLM_PROVIDER,
       model: childEnv.HINDSIGHT_API_LLM_MODEL,
       installDir: config.installDir || null,
       offline: childEnv.UV_OFFLINE === '1',
+      proxyBypassed: network.bypassProxy,
     };
 
+    clearRetry();
+    state.attempt += 1;
+    let child;
     try {
-      const child = spawn('uvx', ['hindsight-embed@latest', '-p', PROFILE, 'daemon', 'start'], {
-        detached: true,
+      // Not detached: a console app started with windowsHide and without
+      // DETACHED_PROCESS gets a hidden console that its own children inherit,
+      // so the Python daemon never opens a visible window.
+      child = spawn('uvx', ['hindsight-embed@latest', '-p', PROFILE, 'daemon', 'start'], {
+        detached: false,
         stdio: 'ignore',
         windowsHide: true,
         env: childEnv,
       });
-      child.on('error', () => {});
-      child.unref();
-      state.pid = child.pid ?? null;
     } catch (error) {
+      state.wantRunning = false;
       return { ok: false, error: `Could not run uvx: ${error?.message ?? String(error)}` };
     }
 
+    child.on('error', (error) => {
+      if (!state.starting) return;
+      state.starting = false;
+      fail(`Could not run uvx: ${error?.message ?? String(error)}`);
+    });
+    child.on('exit', (code) => {
+      if (code === 0 || !state.starting) return;
+      // Give the log a moment to flush the real error before deciding.
+      setTimeout(async () => {
+        if (!state.starting) return;
+        if (await running()) {
+          // The launcher exited but the daemon it started is serving: not a failure.
+          state.starting = false;
+          return;
+        }
+        stopTree();
+        if (state.everUp || logSaysUp()) {
+          // It had been healthy and then vanished: the supervisor will bring it back.
+          state.starting = false;
+          state.lastFailure = null;
+          return;
+        }
+        const failure = failureFromLog() ?? `The daemon exited during startup (exit code ${code}).`;
+        fail(failure);
+      }, 1500);
+    });
+    child.unref();
+    state.pid = child.pid ?? null;
+
     state.starting = true;
+    state.everUp = false;
     state.startedAt = Date.now();
     state.lastFailure = null;
-    hideWindows();
     spawnWatchdog();
     ensureMonitor();
     return { ok: true, status: 'starting' };
   }
 
   async function stop() {
+    state.wantRunning = false;
+    clearRetry();
     stopTree();
     state.starting = false;
+    state.everUp = false;
     state.lastFailure = null;
+    state.attempt = 0;
     return { ok: true, status: 'stopped' };
   }
 
@@ -416,21 +803,45 @@ function createDaemon() {
     if (probe) {
       state.starting = false;
       state.lastFailure = null;
+      state.attempt = 0;
+      state.everUp = true;
+      clearRetry();
       return { running: true, status: 'running', health: probe };
     }
-    if (state.starting) return { running: false, status: 'starting' };
+    if (state.starting) {
+      return { running: false, status: 'starting', attempt: state.attempt, retryAt: 0 };
+    }
+    if (state.retryAt) {
+      return {
+        running: false,
+        status: 'retrying',
+        error: state.lastFailure?.error ?? null,
+        attempt: state.attempt,
+        retryAt: state.retryAt,
+      };
+    }
     if (state.lastFailure && Date.now() - state.lastFailure.at < 10 * 60 * 1000) {
-      return { running: false, status: 'failed', error: state.lastFailure.error };
+      return { running: false, status: 'failed', error: state.lastFailure.error, attempt: state.attempt, retryAt: 0 };
     }
     const failure = state.lastFailure === null ? failureFromLog() : null;
     if (failure) {
       state.lastFailure = { at: Date.now(), error: failure };
-      return { running: false, status: 'failed', error: failure };
+      return { running: false, status: 'failed', error: failure, attempt: state.attempt, retryAt: 0 };
     }
-    return { running: false, status: 'stopped' };
+    return { running: false, status: 'stopped', attempt: state.attempt, retryAt: 0 };
   }
 
-  return { start, stop, status, running, stopTree, envInfo: () => state.lastEnv, state };
+  return {
+    start,
+    stop,
+    status,
+    running,
+    stopTree,
+    ensureSupervisor,
+    envInfo: () => state.lastEnv,
+    networkInfo: () => state.lastNetwork,
+    state,
+  };
 }
 
 /** PIDs listening on a TCP port (Windows `netstat`; the daemon only runs here). */
@@ -456,11 +867,14 @@ export function apply(ctx) {
   const daemon = createDaemon();
   let bankCache = { name: null, at: 0 };
 
+  refreshDaemonPort();
+  daemon.ensureSupervisor();
+
   async function resolveBank({ force = false } = {}) {
     if (!force && bankCache.name && Date.now() - bankCache.at < BANK_CACHE_MS) return bankCache.name;
     let name = null;
     try {
-      const list = await fetchJson(`${DAEMON_BASE}/v1/default/banks?limit=200`);
+      const list = await fetchJson(`${daemonBase()}/v1/default/banks?limit=200`);
       const banks = (list?.banks ?? []).filter(
         (entry) => typeof entry?.bank_id === 'string' && entry.bank_id.startsWith(BANK_PREFIX),
       );
@@ -487,34 +901,107 @@ export function apply(ctx) {
     const out = {
       ok: true,
       ...status,
-      daemonPort: DAEMON_PORT,
+      daemonPort,
       bank,
+      bankExists: null,
       config,
       apiVersion: null,
       stats: null,
       env: daemon.envInfo(),
+      network: daemon.networkInfo(),
     };
     if (status.running) {
       try {
         out.stats = await fetchJson(bankUrl(bank, '/stats'));
+        out.bankExists = true;
       } catch (error) {
         if (error?.status === 404) {
+          // A cached fallback name can lag the first bank by one poll; resolve
+          // again now that the daemon is up before concluding there is none.
           out.bank = await resolveBank({ force: true });
-          out.stats = await fetchJson(bankUrl(out.bank, '/stats')).catch((again) => {
-            out.error = again.message;
-            return null;
-          });
+          try {
+            out.stats = await fetchJson(bankUrl(out.bank, '/stats'));
+            out.bankExists = true;
+          } catch {
+            // No bank yet: a fresh install creates it on the first memory write.
+            out.bankExists = false;
+          }
         } else {
           out.error = error.message;
         }
       }
       try {
-        out.apiVersion = (await fetchJson(`${DAEMON_BASE}/version`)).api_version ?? null;
+        out.apiVersion = (await fetchJson(`${daemonBase()}/version`)).api_version ?? null;
       } catch {
         out.apiVersion = null;
       }
     }
     return out;
+  }
+
+  async function setupState() {
+    const [config, status] = await Promise.all([loadConfig(), daemon.status()]);
+    const integration = integrationStatus();
+    const apiKey = await apiKeyStatus(ctx);
+    const models = modelsStatus();
+    const env = readEnvFile(profileEnvFile());
+    const network = daemon.networkInfo() ?? (await networkState());
+    const steps = [
+      {
+        id: 'integration',
+        title: '安装记忆集成',
+        detail: integration.installed
+          ? `已安装${integration.version ? ` v${integration.version}` : ''}${integration.enabled ? '' : '（未启用）'}`
+          : '把 Hindsight 记忆接入当前 DSH profile',
+        done: integration.installed,
+      },
+      {
+        id: 'key',
+        title: '填写模型密钥',
+        detail: apiKey.configured
+          ? `已配置（${apiKey.source === 'panel' ? '本面板' : apiKey.source === 'harness' ? 'Harness 凭据' : '环境变量'}）`
+          : '用于事实抽取的 DeepSeek API key',
+        done: apiKey.configured,
+      },
+      {
+        id: 'cache',
+        title: '选择缓存目录',
+        detail: config.installDir || '默认位置（可跳过）',
+        done: Boolean(config.installDir),
+        optional: true,
+      },
+      {
+        id: 'daemon',
+        title: '启动本地守护进程',
+        detail:
+          status.status === 'running'
+            ? `运行中 · ${bankCache.name ?? derivedBank()}`
+            : status.status === 'starting'
+              ? '启动中，首次启动要下载本地模型'
+              : '启动后会创建第一个记忆库',
+        done: status.status === 'running',
+      },
+    ];
+    return {
+      ok: true,
+      profile: profileName(),
+      integration,
+      apiKey,
+      models,
+      network,
+      port: { value: daemonPort, pinned: env.HINDSIGHT_API_PORT !== undefined },
+      config,
+      daemon: {
+        status: status.status,
+        running: status.running,
+        error: status.error ?? null,
+        attempt: status.attempt ?? 0,
+        retryAt: status.retryAt ?? 0,
+      },
+      install: { ...installState },
+      steps,
+      ready: integration.installed && apiKey.configured && status.running,
+    };
   }
 
   ctx.inject(['webServer'], (scoped) => {
@@ -526,6 +1013,34 @@ export function apply(ctx) {
           json(res, 200, await overview());
         } catch (error) {
           json(res, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/setup': async (req, res) => {
+        try {
+          if (req.method === 'GET') {
+            json(res, 200, await setupState());
+            return;
+          }
+          const raw = await readBody(req);
+          const body = raw.length === 0 ? {} : JSON.parse(raw);
+          if (body.action === 'install-integration') {
+            json(res, 200, startIntegrationInstall());
+            return;
+          }
+          if (body.action === 'save-key') {
+            const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+            if (apiKey.length < 8 || /\s/.test(apiKey)) {
+              json(res, 400, { ok: false, error: 'API key 格式不正确' });
+              return;
+            }
+            writeEnvFile(profileEnvFile(), { HINDSIGHT_API_LLM_API_KEY: apiKey });
+            json(res, 200, { ok: true, saved: true });
+            return;
+          }
+          json(res, 400, { ok: false, error: 'unknown setup action' });
+        } catch (error) {
+          json(res, 400, { ok: false, error: error?.message ?? String(error) });
         }
       },
 
@@ -639,25 +1154,28 @@ export function apply(ctx) {
   process.on('SIGTERM', onExit);
   process.on('SIGINT', onExit);
 
-  // Auto-start on Harness launch, retrying briefly: the credential service can
-  // become available after this plugin loads.
+  // Auto-start on Harness launch, with retry: the credential service, the
+  // network, or a VPN's proxy can become usable after this plugin loads.
   void loadConfig().then((config) => {
     if (!config.autoStart) return;
     const attempt = (n) => {
-      daemon.start(ctx, config).then((result) => {
-        if (result.ok) {
-          ctx.logger?.info?.(`${PLUGIN}: daemon ${result.already ? 'already running' : 'starting'}`);
-          return;
-        }
-        ctx.logger?.warn?.(`${PLUGIN}: daemon start failed (attempt ${n + 1}): ${result.error}`);
-        if (n < 4) setTimeout(() => attempt(n + 1), 5000);
-      }).catch((error) => {
-        ctx.logger?.warn?.(`${PLUGIN}: daemon start threw: ${error?.message ?? String(error)}`);
-        if (n < 4) setTimeout(() => attempt(n + 1), 5000);
-      });
+      daemon
+        .start(ctx, config)
+        .then((result) => {
+          if (result.ok) {
+            ctx.logger?.info?.(`${PLUGIN}: daemon ${result.already ? 'already running' : 'starting'}`);
+            return;
+          }
+          ctx.logger?.warn?.(`${PLUGIN}: daemon start failed (attempt ${n + 1}): ${result.error}`);
+          if (n < 4) setTimeout(() => attempt(n + 1), 5000);
+        })
+        .catch((error) => {
+          ctx.logger?.warn?.(`${PLUGIN}: daemon start threw: ${error?.message ?? String(error)}`);
+          if (n < 4) setTimeout(() => attempt(n + 1), 5000);
+        });
     };
     attempt(0);
   });
 
-  ctx.logger?.info?.(`${PLUGIN}: host half active (daemon ${DAEMON_BASE})`);
+  ctx.logger?.info?.(`${PLUGIN}: host half active (daemon ${daemonBase()})`);
 }

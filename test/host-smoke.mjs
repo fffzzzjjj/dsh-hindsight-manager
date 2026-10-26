@@ -116,12 +116,38 @@ mod.apply(ctx);
 
 const expected = [
   '/hindsight-manager/api/overview',
+  '/hindsight-manager/api/setup',
   '/hindsight-manager/api/daemon',
   '/hindsight-manager/api/documents',
   '/hindsight-manager/api/search',
   '/hindsight-manager/api/config',
 ];
 for (const path of expected) if (!routes.has(path)) note(`missing route: ${path}`);
+
+// ── setup: the guided checklist answers without a daemon or integration ──────
+const setupGet = await call('/hindsight-manager/api/setup', { method: 'GET' });
+if (setupGet) {
+  if (setupGet.status !== 200) note(`setup GET status = ${setupGet.status} (${setupGet.body})`);
+  const body = setupGet.json ?? {};
+  if (body.ok !== true) note(`setup ok = ${body.ok} (${setupGet.body})`);
+  if (!Array.isArray(body.steps) || body.steps.length !== 4) note('setup does not expose four steps');
+  if (typeof body.ready !== 'boolean') note('setup has no ready flag');
+  if (typeof body.port?.value !== 'number') note('setup has no port value');
+  if (!body.integration || typeof body.integration.installed !== 'boolean') note('setup has no integration state');
+  if (!body.apiKey || typeof body.apiKey.configured !== 'boolean') note('setup has no apiKey state');
+}
+
+const setupBad = await call('/hindsight-manager/api/setup', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'nope' }),
+});
+if (setupBad && setupBad.status !== 400) note(`setup unknown action status = ${setupBad.status}`);
+
+const keyBad = await call('/hindsight-manager/api/setup', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'save-key', apiKey: 'short' }),
+});
+if (keyBad && keyBad.status !== 400) note(`setup short key status = ${keyBad.status}`);
 
 // ── overview: must answer whether or not a daemon is listening ───────────────
 const overview = await call('/hindsight-manager/api/overview');
@@ -191,6 +217,6 @@ if (problems.length > 0) {
   for (const problem of problems) console.error(' - ' + problem);
   process.exitCode = 1;
 } else {
-  console.log('OK: apply registered 5 routes and every handler answered without throwing');
+  console.log(`OK: apply registered ${routes.size} routes and every handler answered without throwing`);
   console.log(`   routes: ${[...routes.keys()].join(', ')}`);
 }

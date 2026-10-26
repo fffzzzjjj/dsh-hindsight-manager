@@ -27,13 +27,31 @@ Manage the local [Hindsight](https://hindsight.vectorize.io) memory daemon from 
 | **搜索记忆** | 语义检索（recall），结果就地展示 |
 | **文档列表** | 最近 20 篇，含字符数、事实数、写入距今 |
 | **缓存可搬家** | 设置里填一个绝对路径，就能把 uv 缓存和本地模型放到别的盘 |
-| **隐藏黑框** | 隐藏 `uv.exe` 的控制台窗口（Windows 11 会把 `windowsHide` 变成 Windows Terminal 窗口） |
+| **引导式部署** | 页面上四步走：装记忆集成 → 填模型密钥 → 选缓存目录 → 启动守护进程；缺什么就只显示那一步的按钮 |
+| **无黑框启动** | 守护进程以隐藏控制台方式启动，不再弹出黑色命令行窗口 |
+| **启动失败自愈** | 网络 / 代理 / 端口占用这类瞬时失败按 5s→5min 退避自动重试，并显示倒计时 |
+| **失效代理自动绕过** | 检测到系统代理指向已关闭的端口时，守护进程对 LLM 直连（Python 会读注册表代理，curl 不会） |
 
 ### 为什么状态不做成开关
 
 最初的实现把状态和动作合成了一个控件，显示「运行中」的按钮点下去是**停止**。结果是「看一眼现在什么状态」和「关掉它」长得完全一样——实测被误点关掉、又点回来，还因此多生成了一个看门狗进程。
 
 所以这里的状态**永远点不动**，动作只出现在明确的「启动」「停止」按钮上。
+
+## 快速开始（装好插件之后）
+
+打开侧栏「本地记忆」，页面顶部就是**快速开始**清单。按顺序做完四步即可，缺哪一步就只显示哪一步的按钮：
+
+1. **安装记忆集成** — 缺 `@vectorize-io/hindsight-coding-agents` 时显示「安装」。点一下会调用 DSH 自带 CLI 把它装进当前 profile；装完提示重启 DSH，重启后会话里才会出现 `hindsight_*` 记忆工具。
+2. **填写模型密钥** — 粘贴 DeepSeek API key（`sk-…`）。它只写到本机 `~/.hindsight/profiles/coding-agent.env`，供 Hindsight 抽取事实；页面上只显示「已配置」和来源，不会回显。
+3. **选择缓存目录**（可跳过）— 不填就用默认位置；填 `D:\hindsight` 这类绝对路径可把 uv 缓存和本地模型搬到别的盘。
+4. **启动守护进程** — 第一次要下载 uv 依赖和两个本地模型（约 500 MB），需要联网；之后 20–40 秒。状态点变绿、显示「运行中」即成功。
+
+四步都完成后，清单会收成一行「环境就绪」，页面继续显示记忆库统计、搜索、最近文档。之后的会话结束时会自动写入记忆；`hindsight_sync_status` 显示 `synced` 后，知识页也会自动生成。
+
+> 状态区的绿点/黄点/红点就是运行标识：**运行中 / 启动中（自动重试中） / 启动失败**。下面还会给出失败原因和下一步建议。
+>
+> 页面根节点自带滚动容器，内容超过一屏可正常向下滚动（设置、诊断信息在底部）。
 
 ## 安装
 
@@ -50,7 +68,7 @@ dsh plugin --profile <你的 profile 名> add file:<克隆下来的目录>
 dsh plugin --profile <你的 profile 名> add file:<本仓库绝对路径>
 ```
 
-然后重启 DSH。侧栏出现「本地记忆」，点进去就是管理页。
+然后重启 DSH。侧栏出现「本地记忆」，点进去按页面上的「快速开始」四步走即可。
 
 > **改了代码必须重装。** pnpm 会把包**复制**进 profile，不是符号链接；而且要 `remove` + `add` 才会重新复制（版本没变的 `file:` 依赖，`add` 只会说 "Already up to date"）：
 >
@@ -87,6 +105,8 @@ embedding 和 rerank 是**本地模型**，随引擎一起下载，不产生 API
 - `installDir`：非空时把 `UV_CACHE_DIR` 指向 `<installDir>/uv-cache`、`HF_HOME` 指向 `<installDir>/hf-models`。**只有在这些目录真的已经有内容时**才追加 `UV_OFFLINE=1` / `HF_HUB_OFFLINE=1` —— 在空目录上强行脱机会把「慢下载」变成「莫名失败」。
 - `autoStart`：`false` 就只靠页面上的按钮手动开。
 
+模型密钥（快速开始第 2 步）写在 `~/.hindsight/profiles/coding-agent.env` 的 `HINDSIGHT_API_LLM_API_KEY`，和 Hindsight 引擎自己读的是同一份；同时把 `HINDSIGHT_API_PORT=9077` 固定下来（`hindsight-embed` 1.x 默认会随机分配端口，插件和记忆集成都需要固定的 9077）。
+
 Hindsight 自己的配置仍在 `~/.hindsight/coding-agent.json`（本插件启动时会写入 `serverMode: "daemon"`）。
 
 ## HTTP 接口
@@ -96,6 +116,8 @@ Host 半边在 Harness 的 web server 上注册（`ctx.inject(['webServer'])` + 
 | 路由 | 作用 |
 |---|---|
 | `GET  /hindsight-manager/api/overview` | 状态 + 配置 + 记忆库统计 + 版本 |
+| `GET  /hindsight-manager/api/setup` | 引导式部署清单：集成 / 密钥 / 端口 / 模型 / 网络 / 是否就绪 |
+| `POST /hindsight-manager/api/setup` | `{"action":"install-integration"}` 或 `{"action":"save-key","apiKey":"…"}` |
 | `POST /hindsight-manager/api/daemon` | `{"action":"start"\|"stop"}` |
 | `GET  /hindsight-manager/api/documents?limit=N` | 文档列表 |
 | `POST /hindsight-manager/api/search` | `{"query":"…","budget":"low"}` |
@@ -132,14 +154,31 @@ async function status() {
 - 看门狗**每个 Harness 进程最多一个**（模块级标志），避免重复实例。
 - 停止守护进程按端口找 PID：守护进程是从启动器上 detach 的，端口是唯一可靠的手柄。
 
+## 故障排查
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 启动后显示「启动失败」，错误含 `Connection error` / `WinError 1225` | Python 读的是 **WinINET 系统代理**（`HKCU\…\Internet Settings`）。代理软件退出后 `ProxyServer` 可能仍指向 `127.0.0.1:7890`，于是守护进程连 DeepSeek 也会被拒。插件会检测该端口是否可达；不可达就自动加 `NO_PROXY=*` 直连（页面诊断信息里会写明）。VPN 恢复后重新启动即可。 |
+| 状态一直「启动中」，超过 6 分钟 | 首次启动要下载 uv 依赖和 `bge-small` / `ms-marco` 两个模型，受网络影响。看 `~/.hindsight/profiles/coding-agent.log` 末尾；失败后会自动退避重试。 |
+| 端口 9077 被占用 | 插件会尝试重试；也可先关掉占用进程（`netstat -ano \| findstr :9077`）。 |
+| 侧栏没有「本地记忆」 | 新装插件后需要重启 DSH（Host 与客户端模块都在启动时装配）。 |
+| 会话里没有 `hindsight_*` 工具 | 记忆集成装了但没重启 DSH；快速开始第 1 步会提示。 |
+| 页面空白 / 不能滚动 | 1.1.0 之前的版本根节点没有高度和 `overflow`；升级并重启后正常。 |
+
+日志与环境文件：
+
+- 守护进程日志：`~/.hindsight/profiles/coding-agent.log`
+- 环境变量（含密钥与端口）：`~/.hindsight/profiles/coding-agent.env`
+- 插件配置：`<DSH_HOME>/storages/dsh-hindsight-manager/config.json`
+
 ## 已知限制
 
-- 只支持 Windows（用了 `netstat` / `taskkill` / `powershell`）。其他平台上会退化成「不隐藏窗口、退出后守护进程继续跑」。
+- 只支持 Windows（用 `netstat` / `taskkill` 管理进程）；其他平台会退化成「退出后守护进程可能继续跑」。
 - 搜索只调 recall，不调 reflect（reflect 要几十秒，放列表页会像卡死）。
 - 不支持删除文档、导出。
 
 ## 致谢与许可
 
-MIT。看门狗与隐藏窗口两段逻辑移植自 [Hua1Q1nG/dsh-hindsight-local-optimize](https://github.com/Hua1Q1nG/dsh-hindsight-local-optimize)（同样 MIT），版权声明保留在 [LICENSE](LICENSE) 中。
+MIT。看门狗逻辑移植自 [Hua1Q1nG/dsh-hindsight-local-optimize](https://github.com/Hua1Q1nG/dsh-hindsight-local-optimize)（同样 MIT），版权声明保留在 [LICENSE](LICENSE) 中。
 
 记忆引擎本身是 [Vectorize Hindsight](https://github.com/vectorize-io/hindsight)（MIT）。
