@@ -201,13 +201,23 @@ function pinDaemonPort() {
 
 // ── plugin config ─────────────────────────────────────────────────────────────
 
-const DEFAULT_CONFIG = { installDir: '', autoStart: true };
+const DEFAULT_CONFIG = {
+  installDir: '',
+  autoStart: true,
+  showFooterStatus: true,
+  showSidebarEntry: true,
+};
 
 async function loadConfig() {
   try {
     const parsed = JSON.parse(await readFile(configFile(), 'utf8'));
     const installDir = typeof parsed.installDir === 'string' ? parsed.installDir.trim() : '';
-    return { installDir, autoStart: parsed.autoStart !== false };
+    return {
+      installDir,
+      autoStart: parsed.autoStart !== false,
+      showFooterStatus: parsed.showFooterStatus !== false,
+      showSidebarEntry: parsed.showSidebarEntry !== false,
+    };
   } catch {
     return { ...DEFAULT_CONFIG };
   }
@@ -1124,6 +1134,12 @@ export function apply(ctx) {
                 return;
               }
               patch.autoStart = value;
+            } else if (key === 'showFooterStatus' || key === 'showSidebarEntry') {
+              if (typeof value !== 'boolean') {
+                json(res, 400, { ok: false, error: `${key} must be a boolean` });
+                return;
+              }
+              patch[key] = value;
             } else {
               json(res, 400, { ok: false, error: `unknown config field: ${key}` });
               return;

@@ -87,7 +87,9 @@ const ctx = {
     },
     register(options, component) {
       registrations.push({ options, component });
-      return () => {};
+      return () => {
+        options.__disposed = true;
+      };
     },
   },
   layout: { selectPanel() {} },
@@ -129,6 +131,21 @@ if (typeof mainInject?.pickDirectory !== 'function') {
 } else {
   const picked = await mainInject.pickDirectory();
   if (picked !== 'D:\\picked-cache') note(`pickDirectory returned ${JSON.stringify(picked)}`);
+}
+
+// ── the two visibility toggles register and dispose their slots ──────────────
+if (typeof mainInject?.applyUiConfig !== 'function') {
+  note('main panel did not receive applyUiConfig');
+} else {
+  mainInject.applyUiConfig({ showFooterStatus: false, showSidebarEntry: false });
+  if (row?.options?.__disposed !== true) note('sidebar row not disposed when hidden');
+  if (bySlot.get('sidebar.footer.action')?.options?.__disposed !== true) note('footer chip not disposed when hidden');
+
+  mainInject.applyUiConfig({ showFooterStatus: true, showSidebarEntry: true });
+  const liveRows = registrations.filter((entry) => entry.options.name === 'sidebar.panellist' && entry.options.__disposed !== true);
+  const liveFooters = registrations.filter((entry) => entry.options.name === 'sidebar.footer.action' && entry.options.__disposed !== true);
+  if (liveRows.length !== 1) note(`sidebar row re-registration count = ${liveRows.length}`);
+  if (liveFooters.length !== 1) note(`footer chip re-registration count = ${liveFooters.length}`);
 }
 
 // ── render once with the fallback translator ─────────────────────────────────

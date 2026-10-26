@@ -100,12 +100,16 @@ embedding 和 rerank 是**本地模型**，随引擎一起下载，不产生 API
 ```json
 {
   "installDir": "D:\\hindsight",
-  "autoStart": true
+  "autoStart": true,
+  "showFooterStatus": true,
+  "showSidebarEntry": true
 }
 ```
 
 - `installDir`：非空时把 `UV_CACHE_DIR` 指向 `<installDir>/uv-cache`、`HF_HOME` 指向 `<installDir>/hf-models`。**只有在这些目录真的已经有内容时**才追加 `UV_OFFLINE=1` / `HF_HUB_OFFLINE=1` —— 在空目录上强行脱机会把「慢下载」变成「莫名失败」。
 - `autoStart`：`false` 就只靠页面上的按钮手动开。
+- `showFooterStatus`：左下角（头像上方）是否显示常驻运行状态条。
+- `showSidebarEntry`：左上角任务栏是否显示「本地记忆」入口。关闭后入口消失，但主面板仍可从状态条打开；**两项都关闭时没有任何入口**，需要编辑这个文件把值改回 `true`。
 
 模型密钥（快速开始第 2 步）写在 `~/.hindsight/profiles/coding-agent.env` 的 `HINDSIGHT_API_LLM_API_KEY`，和 Hindsight 引擎自己读的是同一份；同时把 `HINDSIGHT_API_PORT=9077` 固定下来（`hindsight-embed` 1.x 默认会随机分配端口，插件和记忆集成都需要固定的 9077）。
 

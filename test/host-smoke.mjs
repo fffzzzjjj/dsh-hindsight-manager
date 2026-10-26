@@ -190,6 +190,27 @@ if (configOk) {
   const written = JSON.parse(readFileSync(join(home, 'storages', 'dsh-hindsight-manager', 'config.json'), 'utf8'));
   if (written.installDir !== 'D:\\hindsight-test') note(`config not persisted: ${JSON.stringify(written)}`);
   if (written.autoStart !== false) note(`config autoStart not persisted: ${JSON.stringify(written)}`);
+  if (written.showFooterStatus !== true) note(`config showFooterStatus default: ${JSON.stringify(written)}`);
+  if (written.showSidebarEntry !== true) note(`config showSidebarEntry default: ${JSON.stringify(written)}`);
+}
+
+const configToggles = await call('/hindsight-manager/api/config', {
+  method: 'POST',
+  body: JSON.stringify({ showFooterStatus: false, showSidebarEntry: false }),
+});
+if (configToggles) {
+  if (configToggles.status !== 200) note(`config toggles status = ${configToggles.status} (${configToggles.body})`);
+  const written = JSON.parse(readFileSync(join(home, 'storages', 'dsh-hindsight-manager', 'config.json'), 'utf8'));
+  if (written.showFooterStatus !== false) note(`showFooterStatus not persisted: ${JSON.stringify(written)}`);
+  if (written.showSidebarEntry !== false) note(`showSidebarEntry not persisted: ${JSON.stringify(written)}`);
+}
+
+const configToggleBad = await call('/hindsight-manager/api/config', {
+  method: 'POST',
+  body: JSON.stringify({ showFooterStatus: 'yes' }),
+});
+if (configToggleBad && configToggleBad.status !== 400) {
+  note(`config toggle wrong type status = ${configToggleBad.status}`);
 }
 
 // ── search: an empty query is a client error, not a crash ────────────────────

@@ -108,6 +108,10 @@ window.__ModuleLoader__.load({
       pickerUnavailable: '当前环境不支持系统目录选择，请手动填写路径。',
       autoStart: '随 DSH 启动',
       autoStartHint: '打开后每次启动 DSH 都会自动拉起守护进程，失败会自动重试。',
+      footerStatus: '左下角显示运行状态',
+      footerStatusHint: '在用户头像上方常驻显示本地记忆状态，点击可打开面板。',
+      sidebarEntry: '侧栏显示「本地记忆」入口',
+      sidebarEntryHint: '关闭后左上角任务栏不再显示入口。面板仍可从左下角状态条打开；两项都关闭时，需要编辑 config.json 才能恢复。',
       save: '保存',
       saving: '保存中…',
       saved: '已保存',
@@ -219,6 +223,10 @@ window.__ModuleLoader__.load({
       pickerUnavailable: 'This environment cannot open a directory chooser; type the path instead.',
       autoStart: 'Start with DSH',
       autoStartHint: 'Start the daemon on every DSH launch, retrying transient failures.',
+      footerStatus: 'Show status in the sidebar foot',
+      footerStatusHint: 'A persistent status chip above the account row; click it to open the panel.',
+      sidebarEntry: 'Show the Memory entry in the sidebar',
+      sidebarEntryHint: 'Hides the top-left entry. The panel stays reachable through the footer chip; with both off, edit config.json to restore.',
       save: 'Save',
       saving: 'Saving…',
       saved: 'Saved',
@@ -546,6 +554,7 @@ window.__ModuleLoader__.load({
     function ManagerPanel(props) {
       const t = typeof props?.t === 'function' ? props.t : fallbackT;
       const pickDirectoryProp = typeof props?.pickDirectory === 'function' ? props.pickDirectory : null;
+      const applyUiConfigProp = typeof props?.applyUiConfig === 'function' ? props.applyUiConfig : null;
 
       const [data, setData] = useState(null);
       const [setup, setSetup] = useState(null);
@@ -558,6 +567,8 @@ window.__ModuleLoader__.load({
       const [searching, setSearching] = useState(false);
       const [installDir, setInstallDir] = useState('');
       const [autoStart, setAutoStart] = useState(true);
+      const [showFooterStatus, setShowFooterStatus] = useState(true);
+      const [showSidebarEntry, setShowSidebarEntry] = useState(true);
       const [savingConfig, setSavingConfig] = useState(false);
       const [picking, setPicking] = useState(false);
       const [configMessage, setConfigMessage] = useState(null);
@@ -591,6 +602,8 @@ window.__ModuleLoader__.load({
             configLoaded.current = true;
             setInstallDir(body.config.installDir ?? '');
             setAutoStart(body.config.autoStart !== false);
+            setShowFooterStatus(body.config.showFooterStatus !== false);
+            setShowSidebarEntry(body.config.showSidebarEntry !== false);
           }
         } catch (error) {
           if (alive.current) setLoadError(error.message ?? String(error));
@@ -725,18 +738,19 @@ window.__ModuleLoader__.load({
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             cache: 'no-store',
-            body: JSON.stringify({ installDir, autoStart }),
+            body: JSON.stringify({ installDir, autoStart, showFooterStatus, showSidebarEntry }),
           });
           const body = await res.json().catch(() => ({}));
           if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
           setConfigMessage(t('saved'));
+          applyUiConfigProp?.(body);
           refreshAll();
         } catch (error) {
           setConfigMessage(`${t('errorTitle')}: ${error.message ?? String(error)}`);
         } finally {
           if (alive.current) setSavingConfig(false);
         }
-      }, [installDir, autoStart, refreshAll, t]);
+      }, [installDir, autoStart, showFooterStatus, showSidebarEntry, applyUiConfigProp, refreshAll, t]);
 
       const saveKey = useCallback(async () => {
         const value = keyInput.trim();
@@ -1260,6 +1274,30 @@ window.__ModuleLoader__.load({
                   h('span', { style: { color: C.text3, fontSize: 11 } }, t('autoStartHint')),
                 ),
                 h(
+                  'label',
+                  { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: showFooterStatus,
+                    onChange: (event) => setShowFooterStatus(event.target.checked),
+                    style: { width: 14, height: 14, cursor: 'pointer' },
+                  }),
+                  h('span', null, t('footerStatus')),
+                  h('span', { style: { color: C.text3, fontSize: 11 } }, t('footerStatusHint')),
+                ),
+                h(
+                  'label',
+                  { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: showSidebarEntry,
+                    onChange: (event) => setShowSidebarEntry(event.target.checked),
+                    style: { width: 14, height: 14, cursor: 'pointer' },
+                  }),
+                  h('span', null, t('sidebarEntry')),
+                  h('span', { style: { color: C.text3, fontSize: 11 } }, t('sidebarEntryHint')),
+                ),
+                h(
                   'div',
                   { style: { display: 'flex', alignItems: 'center', gap: 12 } },
                   h(Button, { onClick: saveSettings, primary: true, busy: savingConfig }, savingConfig ? t('saving') : t('save')),
@@ -1460,21 +1498,60 @@ window.__ModuleLoader__.load({
         return service.pickDirectory();
       };
 
+      const ui = { sidebar: true, footer: true };
+      const sync = { sidebar: () => {}, footer: () => {} };
+
+      /**
+       * Apply the persisted visibility preferences. The panel calls this after a
+       * save, and the boot fetch seeds it before the user opens anything.
+       */
+      const applyUiConfig = (config) => {
+        const nextSidebar = config?.showSidebarEntry !== false;
+        const nextFooter = config?.showFooterStatus !== false;
+        if (nextSidebar === ui.sidebar && nextFooter === ui.footer) return;
+        ui.sidebar = nextSidebar;
+        ui.footer = nextFooter;
+        sync.sidebar();
+        sync.footer();
+      };
+
+      void fetch(`${API}/config`, { cache: 'no-store' })
+        .then((res) => res.json())
+        .then((body) => applyUiConfig(body))
+        .catch(() => {});
+
       ctx.slots.inject('sidebar.panellist', () => {
-        const offPanel = ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: () => ({ t, pickDirectory }) }, ManagerPanel);
-        const offRow = ctx.slots.register(
-          {
-            name: 'sidebar.panellist',
-            id: PANEL_ID,
-            order: 20,
-            label: () => t('nav'),
-            locale: NS,
-          },
-          ManagerRowIcon,
+        const offPanel = ctx.slots.register(
+          { name: 'main', key: PANEL_ID, locale: NS, inject: () => ({ t, pickDirectory, applyUiConfig }) },
+          ManagerPanel,
         );
+        let offRow = null;
+        sync.sidebar = () => {
+          if (ui.sidebar && offRow === null) {
+            offRow =
+              ctx.slots.register(
+                {
+                  name: 'sidebar.panellist',
+                  id: PANEL_ID,
+                  order: 20,
+                  label: () => t('nav'),
+                  locale: NS,
+                },
+                ManagerRowIcon,
+              ) ?? null;
+          } else if (!ui.sidebar && offRow !== null) {
+            offRow();
+            offRow = null;
+          }
+        };
+        sync.sidebar();
         return () => {
+          sync.sidebar = () => {};
+          if (offRow !== null) {
+            offRow();
+            offRow = null;
+          }
           offPanel?.();
-          offRow?.();
         };
       });
 
@@ -1487,17 +1564,33 @@ window.__ModuleLoader__.load({
             // navigation is best-effort
           }
         };
-        const off = ctx.slots.register(
-          {
-            name: 'sidebar.footer.action',
-            id: `${PANEL_ID}-status`,
-            order: 10,
-            locale: NS,
-            inject: () => ({ t, open }),
-          },
-          FooterStatus,
-        );
-        return () => off?.();
+        let off = null;
+        sync.footer = () => {
+          if (ui.footer && off === null) {
+            off =
+              ctx.slots.register(
+                {
+                  name: 'sidebar.footer.action',
+                  id: `${PANEL_ID}-status`,
+                  order: 10,
+                  locale: NS,
+                  inject: () => ({ t, open }),
+                },
+                FooterStatus,
+              ) ?? null;
+          } else if (!ui.footer && off !== null) {
+            off();
+            off = null;
+          }
+        };
+        sync.footer();
+        return () => {
+          sync.footer = () => {};
+          if (off !== null) {
+            off();
+            off = null;
+          }
+        };
       });
     }
 
