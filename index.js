@@ -955,24 +955,66 @@ export function apply(ctx) {
 
   let graphCache = { bank: null, at: 0, data: null };
 
+  const pairKey = (left, right) => (left < right ? `${left}|${right}` : `${right}|${left}`);
+  const laterIso = (left, right) => {
+    if (!left) return right ?? null;
+    if (!right) return left;
+    return Date.parse(left) >= Date.parse(right) ? left : right;
+  };
+
+  /**
+   * Memories that carry entity names are the only source for "when did these two
+   * entities first appear together". Paged, capped: the animation does not need
+   * more than the first thousand memories.
+   */
+  async function timelineMemories(bank) {
+    const out = [];
+    const pageSize = 200;
+    for (let page = 0; page < 6; page += 1) {
+      let body;
+      try {
+        body = await fetchJson(
+          bankUrl(bank, `/memories/list?limit=${pageSize}&offset=${out.length}`),
+          undefined,
+          GRAPH_TIMEOUT_MS,
+        );
+      } catch {
+        break;
+      }
+      const items = Array.isArray(body.items) ? body.items : [];
+      out.push(...items);
+      const total = Number(body.total ?? out.length);
+      if (items.length === 0 || out.length >= total || out.length >= 1000) break;
+    }
+    return out;
+  }
+
   /**
    * The entity co-occurrence graph, flattened for the browser. Hindsight returns
    * react-force-graph shaped `{nodes:[{data}], edges:[{data}]}`; the panel only
-   * needs ids, labels, mention counts and weights, so nothing else crosses over.
+   * needs ids, labels, mention counts, weights and first-seen timestamps.
    */
   async function entityGraph() {
     const bank = await resolveBank();
     if (graphCache.data && graphCache.bank === bank && Date.now() - graphCache.at < GRAPH_CACHE_MS) {
       return graphCache.data;
     }
-    const body = await fetchJson(bankUrl(bank, '/entities/graph?limit=1000'), undefined, GRAPH_TIMEOUT_MS);
-    const nodes = (body.nodes ?? [])
-      .map((node) => ({
-        id: String(node?.data?.id ?? ''),
-        label: String(node?.data?.label ?? ''),
-        mentions: Number(node?.data?.mentionCount ?? 0),
-      }))
-      .filter((node) => node.id !== '');
+    const [body, entityList, memories] = await Promise.all([
+      fetchJson(bankUrl(bank, '/entities/graph?limit=1000'), undefined, GRAPH_TIMEOUT_MS),
+      fetchJson(bankUrl(bank, '/entities?limit=1000'), undefined, GRAPH_TIMEOUT_MS).catch(() => null),
+      timelineMemories(bank),
+    ]);
+
+    const entityById = new Map();
+    const idByName = new Map();
+    for (const item of entityList?.items ?? []) {
+      entityById.set(String(item.id), item);
+      idByName.set(String(item.canonical_name ?? '').trim().toLowerCase(), String(item.id));
+    }
+
+    const nodeFirst = new Map();
+    for (const [id, item] of entityById) nodeFirst.set(id, item.first_seen ?? null);
+
     const edges = (body.edges ?? [])
       .map((edge) => ({
         source: String(edge?.data?.source ?? ''),
@@ -981,6 +1023,52 @@ export function apply(ctx) {
         lastCooccurred: edge?.data?.lastCooccurred ?? null,
       }))
       .filter((edge) => edge.source !== '' && edge.target !== '');
+
+    // First co-occurrence per pair, from the memories that name entities.
+    const pairFirst = new Map();
+    for (const memory of memories) {
+      const names = String(memory?.entities ?? '')
+        .split(',')
+        .map((name) => name.trim().toLowerCase())
+        .filter(Boolean);
+      if (names.length < 2) continue;
+      const ids = [...new Set(names.map((name) => idByName.get(name)).filter(Boolean))];
+      if (ids.length < 2) continue;
+      const when = memory?.date ?? memory?.mentioned_at ?? null;
+      if (!when) continue;
+      for (let left = 0; left < ids.length; left += 1) {
+        for (let right = left + 1; right < ids.length; right += 1) {
+          const key = pairKey(ids[left], ids[right]);
+          const previous = pairFirst.get(key);
+          if (!previous || Date.parse(when) < Date.parse(previous)) pairFirst.set(key, when);
+        }
+      }
+    }
+
+    const nodes = (body.nodes ?? [])
+      .map((node) => ({
+        id: String(node?.data?.id ?? ''),
+        label: String(node?.data?.label ?? ''),
+        mentions: Number(node?.data?.mentionCount ?? 0),
+        firstSeen: nodeFirst.get(String(node?.data?.id ?? '')) ?? null,
+        lastSeen: entityById.get(String(node?.data?.id ?? ''))?.last_seen ?? null,
+      }))
+      .filter((node) => node.id !== '');
+
+    for (const edge of edges) {
+      const fallback = laterIso(nodeFirst.get(edge.source) ?? null, nodeFirst.get(edge.target) ?? null);
+      edge.firstSeen = pairFirst.get(pairKey(edge.source, edge.target)) ?? fallback;
+    }
+
+    const born = [
+      ...nodes.map((node) => node.firstSeen),
+      ...edges.map((edge) => edge.firstSeen),
+    ].filter(Boolean).sort();
+    const seen = [
+      ...nodes.map((node) => node.lastSeen),
+      ...edges.map((edge) => edge.lastCooccurred),
+    ].filter(Boolean).sort();
+
     const data = {
       ok: true,
       bank,
@@ -989,6 +1077,10 @@ export function apply(ctx) {
       totalEdges: Number(body.total_edges ?? edges.length),
       nodes,
       edges,
+      span: {
+        start: born[0] ?? null,
+        end: seen[seen.length - 1] ?? born[born.length - 1] ?? null,
+      },
     };
     graphCache = { bank, at: Date.now(), data };
     return data;

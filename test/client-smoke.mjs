@@ -225,6 +225,30 @@ if (typeof handles.GraphCanvas !== 'function') {
     if (!shapes.includes('circle')) note('GraphCanvas drew no nodes');
     if (!shapes.includes('line')) note('GraphCanvas drew no edges');
     if (!shapes.includes('text')) note('GraphCanvas drew no labels');
+
+    // Growth mode: a cutoff before the second node's firstSeen hides it.
+    const revealed = handles.GraphCanvas({
+      t: (key) => key,
+      width: 600,
+      height: 400,
+      focusId: null,
+      stamp: 1,
+      minCount: 1,
+      reveal: { cutoff: Date.parse('2026-10-25T12:00:00Z'), start: Date.parse('2026-10-25T00:00:00Z'), end: Date.parse('2026-10-26T00:00:00Z') },
+      nodes: [
+        { id: 'a', label: 'alpha', mentions: 5, firstSeen: '2026-10-25T10:00:00Z' },
+        { id: 'b', label: 'beta', mentions: 3, firstSeen: '2026-10-25T18:00:00Z' },
+      ],
+      edges: [{ source: 'a', target: 'b', weight: 2, firstSeen: '2026-10-25T18:00:00Z' }],
+    });
+    const circles = [];
+    (function collect(node) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(collect); return; }
+      if (node.type === 'circle') circles.push(node);
+      (node.children ?? []).forEach(collect);
+    })(revealed);
+    if (circles.length !== 1) note(`reveal cutoff drew ${circles.length} nodes, expected 1`);
   } catch (error) {
     note(`GraphCanvas threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
   }

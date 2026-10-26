@@ -234,6 +234,9 @@ if (graph) {
     if (body.ok !== true) note('graph payload is not ok:true');
     if (!Array.isArray(body.nodes)) note('graph payload has no nodes array');
     if (!Array.isArray(body.edges)) note('graph payload has no edges array');
+    if (!body.span || typeof body.span !== 'object') note('graph payload has no time span');
+    const timed = (body.nodes ?? []).filter((node) => typeof node.firstSeen === 'string');
+    if (timed.length === 0) note('graph payload carries no firstSeen timestamps');
   } else if (graph.status === 404 || graph.status === 500) {
     if (body.ok !== false) note('graph failure body is not ok:false');
     if (typeof body.error !== 'string') note('graph failure body has no error text');

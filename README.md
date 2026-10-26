@@ -64,6 +64,8 @@ Manage the local [Hindsight](https://hindsight.vectorize.io) memory daemon from 
 - **全图**：所有实体，节点大小按提及次数；社区分色，如果整张图退化成一个大连通簇（这个库里很常见），自动改用提及次数着色。工具栏的「最少提及」可以砍掉低频节点。
 - **右侧抽屉**：实体的提及次数、首次/最近时间、最近 5 条记忆；「查看全部」一次拉 100 条，点单条展开全文。
 - **搜索**：按实体名即时高亮（不区分大小写），右边显示命中数。
+- **最少提及**：预设 1/2/3/5/10，选「自定义…」可以输入任意正整数。
+- **生长动画**：工具栏点「生长动画」，按记忆写入时间回放——节点和连线在各自首次出现时点亮，连线随时间变粗；底部滑杆可拖拽到任意时刻，可播放/暂停，再点一次退出。时间轴来自实体的 `first_seen` 和记忆里“哪几个实体一起出现”，边是近似到首次共现。
 - 交互：拖拽平移、滚轮缩放、悬停高亮邻居；节点可用 Tab 聚焦、回车打开。
 - 全图最多画 160 个实体、1400 条边（按提及次数/权重取前），超出部分在左下角如实标注。
 
@@ -138,7 +140,7 @@ Host 半边在 Harness 的 web server 上注册（`ctx.inject(['webServer'])` + 
 | `POST /hindsight-manager/api/setup` | `{"action":"install-integration"}` 或 `{"action":"save-key","apiKey":"…"}` |
 | `POST /hindsight-manager/api/daemon` | `{"action":"start"\|"stop"}` |
 | `GET  /hindsight-manager/api/documents?limit=N` | 文档列表 |
-| `GET  /hindsight-manager/api/graph` | 实体共现图（`nodes`/`edges` 扁平化，5 秒缓存） |
+| `GET  /hindsight-manager/api/graph` | 实体共现图（`nodes`/`edges` 扁平化，带 `firstSeen` 与 `span` 时间跨度，5 秒缓存） |
 | `GET  /hindsight-manager/api/entity?id=…&limit=N` | 单个实体 + 提及它的记忆 |
 | `POST /hindsight-manager/api/search` | `{"query":"…","budget":"low"}` |
 | `GET/POST /hindsight-manager/api/config` | 读 / 写 `installDir`、`autoStart` |

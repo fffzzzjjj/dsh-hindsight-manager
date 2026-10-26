@@ -111,6 +111,14 @@ window.__ModuleLoader__.load({
       graphLegendFocus: '焦点',
       graphLegendNear: '直接关联',
       graphLegendFar: '两跳',
+      graphCustom: '自定义…',
+      growth: '生长动画',
+      growthPlay: '播放',
+      growthPause: '暂停',
+      growthExit: '退出动画',
+      growthHint: '按写入时间回放',
+      growthShown: '已出现 {shown} / {total} 个实体',
+      growthUnavailable: '图谱还没有时间信息，暂时不能播放',
       recent: '最近的文档',
       recentEmpty: '还没有任何文档。对话结束后会自动写入，也可以让我手动存一篇。',
       recentHint: '按写入时间倒序，最多 20 篇',
@@ -259,6 +267,14 @@ window.__ModuleLoader__.load({
       graphLegendFocus: 'focus',
       graphLegendNear: 'direct',
       graphLegendFar: 'two hops',
+      graphCustom: 'Custom…',
+      growth: 'Growth',
+      growthPlay: 'Play',
+      growthPause: 'Pause',
+      growthExit: 'Exit',
+      growthHint: 'Replay by write time',
+      growthShown: '{shown} / {total} entities so far',
+      growthUnavailable: 'No timestamps in this graph yet',
       recent: 'Recent documents',
       recentEmpty: 'No documents yet. Conversations are written after they end.',
       recentHint: 'Newest first, up to 20',
@@ -1466,6 +1482,11 @@ window.__ModuleLoader__.load({
 
     const fill = (template, values) =>
       String(template).replace(/\{(\w+)\}/g, (match, key) => (values[key] === undefined ? match : String(values[key])));
+    const formatMoment = (ms) => {
+      const date = new Date(ms);
+      const pad = (value) => String(value).padStart(2, '0');
+      return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    };
     const shortDate = (iso) => (typeof iso === 'string' && iso.length >= 10 ? iso.slice(5, 10) : '—');
 
     function buildAdjacency(edges) {
@@ -1820,6 +1841,7 @@ window.__ModuleLoader__.load({
       const edges = Array.isArray(props?.edges) ? props.edges : [];
       const focusId = props?.focusId ?? null;
       const search = String(props?.search ?? '').trim().toLowerCase();
+      const reveal = props?.reveal ?? null;
       const [zoom, setZoom] = useState(1);
       const [pan, setPan] = useState({ x: 0, y: 0 });
       const [hoverId, setHoverId] = useState(null);
@@ -1892,10 +1914,19 @@ window.__ModuleLoader__.load({
       }
       const highlighted = search !== '' || activeId !== null;
 
+      const bornAt = (iso) => {
+        const value = Date.parse(iso ?? '');
+        return Number.isFinite(value) ? value : null;
+      };
       const points = [];
       for (const [id, point] of layout.positions) {
         const node = nodeById.get(id);
-        if (node) points.push({ node, point, level: layout.ring?.get(id) ?? 1 });
+        if (!node) continue;
+        if (reveal !== null) {
+          const born = bornAt(node.firstSeen);
+          if (born !== null && born > reveal.cutoff) continue;
+        }
+        points.push({ node, point, level: layout.ring?.get(id) ?? 1 });
       }
       const pointById = new Map(points.map((entry) => [entry.node.id, entry.point]));
       const nodeBoxes = points.map(({ node, point, level }) => {
@@ -1911,6 +1942,16 @@ window.__ModuleLoader__.load({
         const hot = activeId !== null && (edge.source === activeId || edge.target === activeId);
         const dim = highlighted && !hot;
         const stroke = edge.kind === 'hub' ? '#6ea8fe' : C.text3;
+        let width = edge.kind === 'hub' ? 1.2 : 0.9;
+        let fade = 1;
+        if (reveal !== null) {
+          const born = bornAt(edge.firstSeen);
+          if (born !== null && born > reveal.cutoff) return;
+          const span = Math.max(1, reveal.end - reveal.start);
+          const age = born === null ? 1 : (reveal.cutoff - born) / (span * 0.18);
+          fade = Math.min(1, 0.35 + 0.65 * Math.max(0, age));
+          width *= Math.max(0.35, fade);
+        }
         edgeElements.push(
           h('line', {
             key: `edge-${position}`,
@@ -1919,8 +1960,19 @@ window.__ModuleLoader__.load({
             x2: to.x,
             y2: to.y,
             stroke,
-            strokeWidth: edge.kind === 'hub' ? 1.2 : 0.9,
-            opacity: dim ? 0.05 : hot ? 0.5 : edge.kind === 'hub' ? 0.3 : 0.14,
+            strokeWidth: width,
+            opacity:
+              reveal !== null
+                ? dim
+                  ? 0.04
+                  : 0.1 + 0.12 * fade
+                : dim
+                  ? 0.05
+                  : hot
+                    ? 0.5
+                    : edge.kind === 'hub'
+                      ? 0.3
+                      : 0.14,
             strokeLinecap: 'round',
           }),
         );
@@ -2116,8 +2168,12 @@ window.__ModuleLoader__.load({
               pointerEvents: 'none',
             },
           },
-          h('span', null, t('graphHint')),
-          layout.hidden > 0 ? h('span', null, fill(t('graphHidden'), { n: layout.hidden })) : null,
+          h('span', null, reveal !== null ? t('growthHint') : t('graphHint')),
+          reveal !== null
+            ? h('span', null, fill(t('growthShown'), { shown: points.length, total: layout.positions.size }))
+            : layout.hidden > 0
+              ? h('span', null, fill(t('graphHidden'), { n: layout.hidden }))
+              : null,
         ),
         legend,
       );
@@ -2299,7 +2355,12 @@ window.__ModuleLoader__.load({
       const [detailError, setDetailError] = useState(null);
       const [showAll, setShowAll] = useState(false);
       const [search, setSearch] = useState('');
-      const [minCount, setMinCount] = useState(1);
+      const [presetMin, setPresetMin] = useState(1);
+      const [customOpen, setCustomOpen] = useState(false);
+      const [customMin, setCustomMin] = useState('2');
+      const [growth, setGrowth] = useState(false);
+      const [progress, setProgress] = useState(0);
+      const [playing, setPlaying] = useState(false);
       const [size, setSize] = useState({ width: 0, height: 0 });
       const [reloadToken, setReloadToken] = useState(0);
       const [detailToken, setDetailToken] = useState(0);
@@ -2404,8 +2465,22 @@ window.__ModuleLoader__.load({
         };
       }, [focusId, showAll, detailToken]);
 
+      useEffect(() => {
+        if (!playing) return () => {};
+        const timer = setInterval(() => {
+          setProgress((current) => Math.min(1, current + 0.01));
+        }, 60);
+        return () => clearInterval(timer);
+      }, [playing]);
+
+      useEffect(() => {
+        if (playing && progress >= 1) setPlaying(false);
+      }, [playing, progress]);
+
       const handleFocus = useCallback((id) => {
         setShowAll(false);
+        setGrowth(false);
+        setPlaying(false);
         setFocusId(id);
       }, []);
 
@@ -2415,6 +2490,13 @@ window.__ModuleLoader__.load({
       const topEntities = [...nodes].sort((left, right) => (right.mentions ?? 0) - (left.mentions ?? 0));
       const matches = search.trim() === '' ? 0 : nodes.filter((node) => String(node.label).toLowerCase().includes(search.trim().toLowerCase())).length;
 
+      const minCount = customOpen ? Math.max(1, Math.min(9999, Math.round(Number(customMin) || 1))) : presetMin;
+      const spanStart = Date.parse(graph?.span?.start ?? '');
+      const spanEnd = Date.parse(graph?.span?.end ?? '');
+      const hasSpan = Number.isFinite(spanStart) && Number.isFinite(spanEnd) && spanEnd > spanStart;
+      const cutoff = growth && hasSpan ? spanStart + (spanEnd - spanStart) * progress : null;
+      const reveal = cutoff === null ? null : { cutoff, start: spanStart, end: spanEnd };
+      const cutoffLabel = cutoff === null ? '' : formatMoment(cutoff);
       const canvasWidth = Math.max(220, size.width || 620);
       const canvasHeight = Math.max(180, size.height || 420);
 
@@ -2441,6 +2523,7 @@ window.__ModuleLoader__.load({
           stamp: graph?.generatedAt ?? 0,
           width: canvasWidth,
           height: canvasHeight,
+          reveal,
           onFocus: handleFocus,
           onBackground: () => setFocusId(null),
         });
@@ -2516,8 +2599,15 @@ window.__ModuleLoader__.load({
           h(
             'select',
             {
-              value: minCount,
-              onChange: (event) => setMinCount(Number(event.target.value)),
+              value: customOpen ? 'custom' : String(presetMin),
+              onChange: (event) => {
+                if (event.target.value === 'custom') {
+                  setCustomOpen(true);
+                  return;
+                }
+                setCustomOpen(false);
+                setPresetMin(Number(event.target.value));
+              },
               title: t('graphMin'),
               disabled: focusNode !== null,
               style: {
@@ -2530,8 +2620,47 @@ window.__ModuleLoader__.load({
               },
             },
             [1, 2, 3, 5, 10].map((value) =>
-              h('option', { key: value, value }, `${t('graphMin')} ${value}${t('graphMinUnit')}`),
+              h('option', { key: value, value: String(value) }, `${t('graphMin')} ${value}${t('graphMinUnit')}`),
             ),
+            h('option', { key: 'custom', value: 'custom' }, t('graphCustom')),
+          ),
+          customOpen
+            ? h('input', {
+                type: 'number',
+                min: 1,
+                max: 9999,
+                value: customMin,
+                placeholder: '2',
+                onChange: (event) => setCustomMin(event.target.value),
+                style: {
+                  width: 56,
+                  border: `1px solid ${C.border2}`,
+                  background: C.base,
+                  color: C.text,
+                  borderRadius: 7,
+                  padding: '4px 6px',
+                  fontSize: 11.5,
+                },
+              })
+            : null,
+          h(
+            Button,
+            {
+              onClick: () => {
+                if (growth) {
+                  setGrowth(false);
+                  setPlaying(false);
+                  return;
+                }
+                setFocusId(null);
+                setProgress(0);
+                setGrowth(true);
+                setPlaying(true);
+              },
+              disabled: !running || !hasSpan,
+              title: hasSpan ? '' : t('growthUnavailable'),
+            },
+            growth ? t('growthExit') : t('growth'),
           ),
           h(Button, { onClick: () => setReloadToken((token) => token + 1), busy: loading, disabled: !running }, t('graphRefresh')),
         ),
@@ -2581,6 +2710,54 @@ window.__ModuleLoader__.load({
             }),
           ),
         ),
+        growth && hasSpan
+          ? h(
+              'div',
+              {
+                style: {
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '6px 12px',
+                  borderTop: `1px solid ${C.border}`,
+                },
+              },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  onClick: () => {
+                    if (progress >= 1) setProgress(0);
+                    setPlaying((current) => !current);
+                  },
+                  style: {
+                    appearance: 'none',
+                    border: `1px solid ${C.border2}`,
+                    background: C.surface2,
+                    color: C.text,
+                    borderRadius: 7,
+                    padding: '2px 10px',
+                    fontSize: 11.5,
+                    cursor: 'pointer',
+                  },
+                },
+                playing ? t('growthPause') : t('growthPlay'),
+              ),
+              h('input', {
+                type: 'range',
+                min: 0,
+                max: 1,
+                step: 0.001,
+                value: progress,
+                onChange: (event) => {
+                  setPlaying(false);
+                  setProgress(Number(event.target.value));
+                },
+                style: { flex: 1, minWidth: 0 },
+              }),
+              h('span', { style: { fontSize: 10.5, color: C.text3, minWidth: 92, textAlign: 'right' } }, cutoffLabel),
+            )
+          : null,
       );
     }
 
