@@ -148,6 +148,21 @@ if (typeof mainInject?.applyUiConfig !== 'function') {
   if (liveFooters.length !== 1) note(`footer chip re-registration count = ${liveFooters.length}`);
 }
 
+// ── the bundle config block on the Plugins page ──────────────────────────────
+const bundleConfig = bySlot.get('plugins.bundle.config');
+if (bundleConfig === undefined) {
+  note('no plugins.bundle.config registration');
+} else {
+  if (bundleConfig.options.key !== 'dsh-hindsight-manager') {
+    note(`bundle config key = ${bundleConfig.options.key}`);
+  }
+  try {
+    bundleConfig.component({ view: 'page' });
+  } catch (error) {
+    note(`bundle config threw: ${error.message}`);
+  }
+}
+
 // ── render once with the fallback translator ─────────────────────────────────
 function renderCase() {
   seen.length = 0;

@@ -16,6 +16,8 @@ window.__ModuleLoader__.load({
 
     const NS = 'hindsight-manager';
     const PANEL_ID = 'hindsight-manager';
+    const BUNDLE_KEY = 'dsh-hindsight-manager';
+    const CONFIG_EVENT = 'dsh-hindsight-manager:config';
     const API = '/hindsight-manager/api';
 
     const zh = {
@@ -111,7 +113,10 @@ window.__ModuleLoader__.load({
       footerStatus: '左下角显示运行状态',
       footerStatusHint: '在用户头像上方常驻显示本地记忆状态，点击可打开面板。',
       sidebarEntry: '侧栏显示「本地记忆」入口',
-      sidebarEntryHint: '关闭后左上角任务栏不再显示入口。面板仍可从左下角状态条打开；两项都关闭时，需要编辑 config.json 才能恢复。',
+      sidebarEntryHint: '关闭后左上角任务栏不再显示入口。可随时在「插件 → 已安装插件 → 本地记忆」里重新打开，或点下方「打开面板」。',
+      bundleSettingsTitle: '侧栏与状态条',
+      bundleSettingsHint: '设置立即生效，并与「本地记忆」页面里的开关同步。',
+      openPanel: '打开面板',
       save: '保存',
       saving: '保存中…',
       saved: '已保存',
@@ -226,7 +231,10 @@ window.__ModuleLoader__.load({
       footerStatus: 'Show status in the sidebar foot',
       footerStatusHint: 'A persistent status chip above the account row; click it to open the panel.',
       sidebarEntry: 'Show the Memory entry in the sidebar',
-      sidebarEntryHint: 'Hides the top-left entry. The panel stays reachable through the footer chip; with both off, edit config.json to restore.',
+      sidebarEntryHint: 'Hides the top-left entry. Reopen it any time from Plugins → Installed → Local Memory, or with Open panel below.',
+      bundleSettingsTitle: 'Sidebar and status',
+      bundleSettingsHint: 'Applies immediately and stays in sync with the switches on the Local Memory page.',
+      openPanel: 'Open panel',
       save: 'Save',
       saving: 'Saving…',
       saved: 'Saved',
@@ -744,6 +752,13 @@ window.__ModuleLoader__.load({
           if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
           setConfigMessage(t('saved'));
           applyUiConfigProp?.(body);
+          if (typeof window?.dispatchEvent === 'function') {
+            try {
+              window.dispatchEvent(new CustomEvent(CONFIG_EVENT, { detail: body }));
+            } catch {
+              // CustomEvent may be unavailable in an old host
+            }
+          }
           refreshAll();
         } catch (error) {
           setConfigMessage(`${t('errorTitle')}: ${error.message ?? String(error)}`);
@@ -1456,6 +1471,110 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * The bundle's own configuration block on the Plugins page (Installed → this
+     * plugin). It mirrors the two visibility switches and can open the panel, so
+     * no combination of switches can hide the only way back.
+     */
+    function BundlePanelSettings(props) {
+      const t = typeof props?.t === 'function' ? props.t : fallbackT;
+      const open = typeof props?.open === 'function' ? props.open : undefined;
+      const [config, setConfig] = useState(null);
+      const [saving, setSaving] = useState(false);
+      const [message, setMessage] = useState(null);
+
+      useEffect(() => {
+        let alive = true;
+        const load = async () => {
+          try {
+            const res = await fetch(`${API}/config`, { cache: 'no-store' });
+            const body = await res.json();
+            if (alive && res.ok && body.ok !== false) setConfig(body);
+          } catch {
+            // the Local Memory page reports service trouble
+          }
+        };
+        load();
+        const onConfig = (event) => {
+          if (alive && event?.detail) setConfig((previous) => ({ ...(previous ?? {}), ...event.detail }));
+        };
+        if (typeof window?.addEventListener === 'function') window.addEventListener(CONFIG_EVENT, onConfig);
+        return () => {
+          alive = false;
+          if (typeof window?.removeEventListener === 'function') window.removeEventListener(CONFIG_EVENT, onConfig);
+        };
+      }, []);
+
+      const update = async (patch) => {
+        setSaving(true);
+        setMessage(null);
+        try {
+          const res = await fetch(`${API}/config`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify(patch),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          setConfig(body);
+          if (typeof window?.dispatchEvent === 'function') {
+            try {
+              window.dispatchEvent(new CustomEvent(CONFIG_EVENT, { detail: body }));
+            } catch {
+              // CustomEvent may be unavailable in an old host
+            }
+          }
+          setMessage(t('saved'));
+        } catch (error) {
+          setMessage(`${t('errorTitle')}: ${error?.message ?? String(error)}`);
+        } finally {
+          if (typeof window !== 'undefined') setSaving(false);
+        }
+      };
+
+      const row = (key, label, hint, value) =>
+        h(
+          'label',
+          {
+            style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', flexWrap: 'wrap' },
+          },
+          h('input', {
+            type: 'checkbox',
+            checked: value,
+            disabled: saving,
+            onChange: (event) => update({ [key]: event.target.checked }),
+            style: { width: 14, height: 14, cursor: 'pointer' },
+          }),
+          h('span', null, label),
+          h('span', { style: { color: C.text3, fontSize: 11 } }, hint),
+        );
+
+      return h(
+        Card,
+        { style: { marginTop: 12 } },
+        h(SectionTitle, { hint: t('bundleSettingsHint') }, t('bundleSettingsTitle')),
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+          row('showSidebarEntry', t('sidebarEntry'), t('sidebarEntryHint'), config?.showSidebarEntry !== false),
+          row('showFooterStatus', t('footerStatus'), t('footerStatusHint'), config?.showFooterStatus !== false),
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 2 } },
+            open ? h(Button, { onClick: open }, t('openPanel')) : null,
+            message
+              ? h(
+                  'span',
+                  { style: { fontSize: 11, color: message.startsWith(t('errorTitle')) ? C.err : C.ok } },
+                  message,
+                )
+              : null,
+          ),
+        ),
+      );
+    }
+
     /** The sidebar row's icon. */
     function ManagerRowIcon(owner) {
       const size = owner?.size ?? 16;
@@ -1520,6 +1639,38 @@ window.__ModuleLoader__.load({
         .then((body) => applyUiConfig(body))
         .catch(() => {});
 
+      /** Open the Local Memory panel; the main slot stays registered either way. */
+      const openPanel = () => {
+        try {
+          ctx.layout?.selectPanel?.(PANEL_ID);
+        } catch {
+          // navigation is best-effort
+        }
+      };
+
+      // Any surface that saves a visibility switch publishes it here.
+      ctx.effect(() => {
+        if (typeof window?.addEventListener !== 'function') return () => {};
+        const onConfig = (event) => {
+          if (event?.detail) applyUiConfig(event.detail);
+        };
+        window.addEventListener(CONFIG_EVENT, onConfig);
+        return () => window.removeEventListener(CONFIG_EVENT, onConfig);
+      }, `${NS}: config events`);
+
+      ctx.slots.inject('plugins.bundle.config', () => {
+        const off = ctx.slots.register(
+          {
+            name: 'plugins.bundle.config',
+            key: BUNDLE_KEY,
+            locale: NS,
+            inject: () => ({ t, open: openPanel }),
+          },
+          BundlePanelSettings,
+        );
+        return () => off?.();
+      });
+
       ctx.slots.inject('sidebar.panellist', () => {
         const offPanel = ctx.slots.register(
           { name: 'main', key: PANEL_ID, locale: NS, inject: () => ({ t, pickDirectory, applyUiConfig }) },
@@ -1557,13 +1708,7 @@ window.__ModuleLoader__.load({
 
       // Foot-of-sidebar status, directly above the account row.
       ctx.slots.inject('sidebar.footer.action', () => {
-        const open = () => {
-          try {
-            ctx.layout?.selectPanel?.(PANEL_ID);
-          } catch {
-            // navigation is best-effort
-          }
-        };
+        const open = openPanel;
         let off = null;
         sync.footer = () => {
           if (ui.footer && off === null) {
