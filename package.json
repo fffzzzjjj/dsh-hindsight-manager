@@ -1,6 +1,6 @@
 {
   "name": "dsh-hindsight-manager",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": false,
   "description": "Deploy and manage a local Hindsight memory bank inside DeepSeek Harness: guided setup (integration, model key, cache), daemon lifecycle, and a page to browse this repo's memory. · 在 DSH 里一键部署并管理本地 Hindsight 记忆库：引导安装记忆集成、填写模型密钥、启停守护进程，并浏览本仓库的记忆库。",
   "license": "MIT",

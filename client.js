@@ -103,6 +103,9 @@ window.__ModuleLoader__.load({
       settingsHint: '保存在本机，作用于这个 profile',
       installDir: '缓存目录',
       installDirHint: '留空用系统默认位置。填 D:\\hindsight 这类绝对路径可以把 uv 缓存和模型放到别的盘。',
+      browse: '浏览…',
+      picking: '选择中…',
+      pickerUnavailable: '当前环境不支持系统目录选择，请手动填写路径。',
       autoStart: '随 DSH 启动',
       autoStartHint: '打开后每次启动 DSH 都会自动拉起守护进程，失败会自动重试。',
       save: '保存',
@@ -211,6 +214,9 @@ window.__ModuleLoader__.load({
       settingsHint: 'Stored locally, applies to this profile',
       installDir: 'Cache directory',
       installDirHint: 'Leave empty for the system default. An absolute path moves the uv cache and models.',
+      browse: 'Browse…',
+      picking: 'Choosing…',
+      pickerUnavailable: 'This environment cannot open a directory chooser; type the path instead.',
       autoStart: 'Start with DSH',
       autoStartHint: 'Start the daemon on every DSH launch, retrying transient failures.',
       save: 'Save',
@@ -539,6 +545,7 @@ window.__ModuleLoader__.load({
 
     function ManagerPanel(props) {
       const t = typeof props?.t === 'function' ? props.t : fallbackT;
+      const pickDirectoryProp = typeof props?.pickDirectory === 'function' ? props.pickDirectory : null;
 
       const [data, setData] = useState(null);
       const [setup, setSetup] = useState(null);
@@ -552,6 +559,7 @@ window.__ModuleLoader__.load({
       const [installDir, setInstallDir] = useState('');
       const [autoStart, setAutoStart] = useState(true);
       const [savingConfig, setSavingConfig] = useState(false);
+      const [picking, setPicking] = useState(false);
       const [configMessage, setConfigMessage] = useState(null);
       const [keyEditing, setKeyEditing] = useState(false);
       const [keyInput, setKeyInput] = useState('');
@@ -690,6 +698,24 @@ window.__ModuleLoader__.load({
           if (alive.current) setBusy(null);
         }
       }, [loadSetup]);
+
+      const pickCacheDir = useCallback(async () => {
+        if (pickDirectoryProp === null) {
+          setConfigMessage(`${t('errorTitle')}: ${t('pickerUnavailable')}`);
+          return;
+        }
+        setPicking(true);
+        setConfigMessage(null);
+        try {
+          const picked = await pickDirectoryProp();
+          if (typeof picked === 'string' && picked !== '') setInstallDir(picked);
+          else if (picked && typeof picked.path === 'string') setInstallDir(picked.path);
+        } catch (error) {
+          setConfigMessage(`${t('errorTitle')}: ${error?.message ?? String(error)}`);
+        } finally {
+          if (alive.current) setPicking(false);
+        }
+      }, [pickDirectoryProp, t]);
 
       const saveSettings = useCallback(async () => {
         setSavingConfig(true);
@@ -1200,16 +1226,25 @@ window.__ModuleLoader__.load({
                 'div',
                 { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
                 h(
-                  'label',
+                  'div',
                   { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
                   h('span', { style: { fontSize: 12, color: C.text } }, t('installDir')),
-                  h('input', {
-                    type: 'text',
-                    value: installDir,
-                    placeholder: 'e.g. D:\\hindsight',
-                    onChange: (event) => setInstallDir(event.target.value),
-                    style: inputStyle,
-                  }),
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+                    h('input', {
+                      type: 'text',
+                      value: installDir,
+                      placeholder: 'e.g. D:\\hindsight',
+                      onChange: (event) => setInstallDir(event.target.value),
+                      style: inputStyle,
+                    }),
+                    h(
+                      Button,
+                      { onClick: pickCacheDir, busy: picking, disabled: !pickDirectoryProp },
+                      picking ? t('picking') : t('browse'),
+                    ),
+                  ),
                   h('span', { style: { fontSize: 11, color: C.text3 } }, t('installDirHint')),
                 ),
                 h(
@@ -1271,6 +1306,118 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * Persistent status chip in the sidebar foot, right above the account row.
+     * It polls on its own so the running state is visible while the panel is
+     * closed, and opens the panel when clicked.
+     */
+    function FooterStatus(props) {
+      const t = typeof props?.t === 'function' ? props.t : fallbackT;
+      const wide = props?.wide !== false;
+      const [status, setStatus] = useState('unknown');
+      const [bank, setBank] = useState(null);
+      const [hover, setHover] = useState(false);
+
+      useEffect(() => {
+        let alive = true;
+        const load = async () => {
+          try {
+            const res = await fetch(`${API}/overview`, { cache: 'no-store' });
+            const body = await res.json();
+            if (!alive) return;
+            if (res.ok && body.ok !== false) {
+              setStatus(body.status ?? 'unknown');
+              setBank(body.bank ?? null);
+            }
+          } catch {
+            if (alive) setStatus('unknown');
+          }
+        };
+        load();
+        const timer = setInterval(load, 6000);
+        return () => {
+          alive = false;
+          clearInterval(timer);
+        };
+      }, []);
+
+      const label =
+        status === 'running'
+          ? t('stateRunning')
+          : status === 'starting'
+            ? t('stateStarting')
+            : status === 'retrying'
+              ? t('stateRetrying')
+              : status === 'failed'
+                ? t('stateFailed')
+                : status === 'stopped'
+                  ? t('stateStopped')
+                  : t('stateUnknown');
+      const color = stateColor[status] ?? C.text3;
+      const open = typeof props?.open === 'function' ? props.open : undefined;
+
+      return h(
+        'button',
+        {
+          type: 'button',
+          onClick: open,
+          onMouseEnter: () => setHover(true),
+          onMouseLeave: () => setHover(false),
+          title: `${t('nav')} · ${label}${bank ? ` · ${bank}` : ''}`,
+          style: {
+            appearance: 'none',
+            border: 'none',
+            width: '100%',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 7,
+            padding: wide ? '5px 8px' : '5px 0',
+            borderRadius: 8,
+            background: hover && open ? C.surface2 : 'transparent',
+            color: C.text2,
+            fontSize: 11.5,
+            fontFamily: 'inherit',
+            textAlign: 'left',
+            cursor: open ? 'pointer' : 'default',
+            justifyContent: wide ? 'flex-start' : 'center',
+          },
+        },
+        h(Dot, { color, glow: status === 'running', size: 8 }),
+        wide
+          ? h(
+              'span',
+              {
+                style: {
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  flex: 'none',
+                  maxWidth: 110,
+                },
+              },
+              t('nav'),
+            )
+          : null,
+        wide
+          ? h(
+              'span',
+              {
+                style: {
+                  color,
+                  marginLeft: 'auto',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  fontSize: 11,
+                },
+              },
+              label,
+            )
+          : null,
+      );
+    }
+
     /** The sidebar row's icon. */
     function ManagerRowIcon(owner) {
       const size = owner?.size ?? 16;
@@ -1299,8 +1446,20 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), `${NS}: dictionaries`);
       const t = localeTranslator(ctx);
 
+      /** Native directory chooser through the workspace service, when mounted. */
+      const pickDirectory = async () => {
+        let service;
+        try {
+          service = ctx.uiWorkspace ?? ctx.get?.('uiWorkspace');
+        } catch {
+          service = undefined;
+        }
+        if (typeof service?.pickDirectory !== 'function') throw new Error(t('pickerUnavailable'));
+        return service.pickDirectory();
+      };
+
       ctx.slots.inject('sidebar.panellist', () => {
-        const offPanel = ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: () => ({ t }) }, ManagerPanel);
+        const offPanel = ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: () => ({ t, pickDirectory }) }, ManagerPanel);
         const offRow = ctx.slots.register(
           {
             name: 'sidebar.panellist',
@@ -1315,6 +1474,37 @@ window.__ModuleLoader__.load({
           offPanel?.();
           offRow?.();
         };
+      });
+
+      // Foot-of-sidebar status, directly above the account row.
+      ctx.slots.inject('sidebar.footer.action', () => {
+        let layout;
+        try {
+          layout = ctx.layout ?? ctx.get?.('layout');
+        } catch {
+          layout = undefined;
+        }
+        const open =
+          typeof layout?.selectPanel === 'function'
+            ? () => {
+                try {
+                  layout.selectPanel(PANEL_ID);
+                } catch {
+                  // navigation is best-effort
+                }
+              }
+            : undefined;
+        const off = ctx.slots.register(
+          {
+            name: 'sidebar.footer.action',
+            id: `${PANEL_ID}-status`,
+            order: 10,
+            locale: NS,
+            inject: () => ({ t, open }),
+          },
+          FooterStatus,
+        );
+        return () => off?.();
       });
     }
 
