@@ -213,6 +213,9 @@ const DEFAULT_CONFIG = {
   /** '' means "derive it"; anything else is an explicit bank to READ (writes
    *  still follow the session's own workspace). */
   bank: '',
+  /** Budget tier the panel's own search and probe use. The memory integration
+   *  picks its own tier per call, so this only governs this page. */
+  searchBudget: 'low',
 };
 
 async function loadConfig() {
@@ -225,6 +228,7 @@ async function loadConfig() {
       showFooterStatus: parsed.showFooterStatus !== false,
       showSidebarEntry: parsed.showSidebarEntry !== false,
       bank: typeof parsed.bank === 'string' ? parsed.bank.trim() : '',
+      searchBudget: ['low', 'mid', 'high'].includes(parsed.searchBudget) ? parsed.searchBudget : 'low',
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -1379,14 +1383,16 @@ export function apply(ctx) {
             typeof body.query === 'string' && body.query.trim() !== ''
               ? body.query.trim()
               : '这个项目最近在做什么，有哪些决定';
+          const config = await loadConfig();
           const bank = await resolveBank();
+          const budget = config.searchBudget;
           const started = Date.now();
           const result = await fetchJson(
             bankUrl(bank, '/memories/recall'),
             {
               method: 'POST',
               headers: { 'content-type': 'application/json; charset=utf-8' },
-              body: JSON.stringify({ query, budget: 'low', max_tokens: 1024 }),
+              body: JSON.stringify({ query, budget, max_tokens: 1024 }),
             },
             SEARCH_TIMEOUT_MS,
           );
@@ -1398,6 +1404,7 @@ export function apply(ctx) {
             results: results.length,
             chars,
             tokens: Math.round(chars / 2),
+            budget,
             query,
           };
           healthProbes.set(bank, probe);
@@ -1459,7 +1466,8 @@ export function apply(ctx) {
             json(res, 400, { ok: false, error: 'query must not be empty' });
             return;
           }
-          const budget = ['low', 'mid', 'high'].includes(body.budget) ? body.budget : 'low';
+          const config = await loadConfig();
+          const budget = ['low', 'mid', 'high'].includes(body.budget) ? body.budget : config.searchBudget;
           const bank = await resolveBank();
           const result = await fetchJson(
             bankUrl(bank, '/memories/recall'),
@@ -1498,6 +1506,12 @@ export function apply(ctx) {
                 return;
               }
               patch.autoStart = value;
+            } else if (key === 'searchBudget') {
+              if (!['low', 'mid', 'high'].includes(value)) {
+                json(res, 400, { ok: false, error: 'searchBudget must be low, mid or high' });
+                return;
+              }
+              patch.searchBudget = value;
             } else if (key === 'bank') {
               if (typeof value !== 'string') {
                 json(res, 400, { ok: false, error: 'bank must be a string' });

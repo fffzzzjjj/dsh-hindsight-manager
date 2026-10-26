@@ -308,6 +308,22 @@ if (probeCall) {
   }
 }
 
+const budgetBad = await call('/hindsight-manager/api/config', {
+  method: 'POST',
+  body: JSON.stringify({ searchBudget: 'medium' }),
+});
+if (budgetBad && budgetBad.status !== 400) note(`config searchBudget invalid status = ${budgetBad.status}`);
+
+const budgetOk = await call('/hindsight-manager/api/config', {
+  method: 'POST',
+  body: JSON.stringify({ searchBudget: 'high' }),
+});
+if (budgetOk) {
+  if (budgetOk.status !== 200) note(`config searchBudget status = ${budgetOk.status}`);
+  const written = JSON.parse(readFileSync(join(home, 'storages', 'dsh-hindsight-manager', 'config.json'), 'utf8'));
+  if (written.searchBudget !== 'high') note(`searchBudget not persisted: ${JSON.stringify(written)}`);
+}
+
 // ── search: an empty query is a client error, not a crash ────────────────────
 const searchEmpty = await call('/hindsight-manager/api/search', { method: 'POST', body: JSON.stringify({}) });
 if (searchEmpty && searchEmpty.status !== 400) note(`search empty query status = ${searchEmpty.status}`);

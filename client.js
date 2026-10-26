@@ -82,11 +82,14 @@ window.__ModuleLoader__.load({
       probe: '测一次检索',
       probing: '检索中…',
       probeHint: '用固定问题跑一次 recall，比较不同时期的耗时和返回量；不会改动记忆。',
-      probeResult: '{ms} ms · {results} 条 · 约 {tokens} tokens',
+      probeResult: '{budget} · {ms} ms · {results} 条 · 约 {tokens} tokens',
       probeFailed: '测速失败',
       bankConfig: '库参数',
       bankConfigHint: '写进 Hindsight 库配置的设置，不是插件配置',
-      bankMaxTokens: '召回 token 上限',
+      bankMaxTokens: '召回 token 上限（默认值）',
+      bankMaxTokensHint: '只对没有显式传 max_tokens 的调用生效；memory 集成会自己传值，探针固定用 1024。',
+      searchBudget: '检索档位',
+      searchBudgetHint: '面板的「搜索记忆」和「测一次检索」用这个档位；memory 集成按每次调用自己选。',
       bankBudget: '预算策略',
       budgetFixed: '固定',
       budgetAdaptive: '自适应',
@@ -268,11 +271,14 @@ window.__ModuleLoader__.load({
       probe: 'Time a retrieval',
       probing: 'Retrieving…',
       probeHint: 'Runs one recall with a fixed question so timings stay comparable; nothing is written.',
-      probeResult: '{ms} ms · {results} hits · ~{tokens} tokens',
+      probeResult: '{budget} · {ms} ms · {results} hits · ~{tokens} tokens',
       probeFailed: 'Probe failed',
       bankConfig: 'Bank settings',
       bankConfigHint: 'Written into the Hindsight bank config, not the plugin config',
-      bankMaxTokens: 'Recall token cap',
+      bankMaxTokens: 'Recall token cap (default)',
+      bankMaxTokensHint: 'Only applies when the caller omits max_tokens; the memory integration passes its own, and the probe uses 1024.',
+      searchBudget: 'Retrieval tier',
+      searchBudgetHint: 'Used by this panel\'s search and probe; the memory integration chooses per call.',
       bankBudget: 'Budget strategy',
       budgetFixed: 'Fixed',
       budgetAdaptive: 'Adaptive',
@@ -739,6 +745,7 @@ window.__ModuleLoader__.load({
       const [probing, setProbing] = useState(false);
       const [bankConfig, setBankConfig] = useState(null);
       const [bankDraft, setBankDraft] = useState({});
+      const [searchBudget, setSearchBudget] = useState('low');
       const [bankConfigBusy, setBankConfigBusy] = useState(false);
       const [bankConfigMessage, setBankConfigMessage] = useState(null);
       const [extrasMissing, setExtrasMissing] = useState(false);
@@ -785,6 +792,7 @@ window.__ModuleLoader__.load({
             setShowFooterStatus(body.config.showFooterStatus !== false);
             setShowSidebarEntry(body.config.showSidebarEntry !== false);
             setBankChoice(typeof body.config.bank === 'string' ? body.config.bank : '');
+            setSearchBudget(['low', 'mid', 'high'].includes(body.config.searchBudget) ? body.config.searchBudget : 'low');
           }
         } catch (error) {
           if (alive.current) setLoadError(error.message ?? String(error));
@@ -984,6 +992,31 @@ window.__ModuleLoader__.load({
           }
         },
         [refreshAll, loadBanks, t],
+      );
+
+      const changeSearchBudget = useCallback(
+        async (value) => {
+          const previous = searchBudget;
+          setSearchBudget(value);
+          setBankConfigMessage(null);
+          try {
+            const res = await fetch(`${API}/config`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              cache: 'no-store',
+              body: JSON.stringify({ searchBudget: value }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+            if (alive.current) setBankConfigMessage(t('bankConfigSaved'));
+          } catch (error) {
+            if (alive.current) {
+              setSearchBudget(previous);
+              setBankConfigMessage(`${t('bankConfigFailed')}: ${error.message ?? String(error)}`);
+            }
+          }
+        },
+        [searchBudget, t],
       );
 
       const runProbe = useCallback(async () => {
@@ -1769,6 +1802,7 @@ window.__ModuleLoader__.load({
                               'span',
                               { style: { fontSize: 11.5, color: C.text3 } },
                               `${fill(t('probeResult'), {
+                                budget: probe.budget ?? searchBudget,
                                 ms: probe.ms,
                                 results: probe.results,
                                 tokens: fmt(probe.tokens),
@@ -1830,6 +1864,21 @@ window.__ModuleLoader__.load({
                             h(
                               'label',
                               { style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 } },
+                              h('span', { style: { color: C.text2 } }, t('searchBudget')),
+                              h(
+                                'select',
+                                {
+                                  value: searchBudget,
+                                  onChange: (event) => changeSearchBudget(event.target.value),
+                                  style: bankSelectStyle,
+                                  title: t('searchBudgetHint'),
+                                },
+                                ['low', 'mid', 'high'].map((tier) => h('option', { key: tier, value: tier }, tier)),
+                              ),
+                            ),
+                            h(
+                              'label',
+                              { style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 } },
                               h('span', { style: { color: C.text2 } }, t('bankExtraction')),
                               h(
                                 'select',
@@ -1845,6 +1894,7 @@ window.__ModuleLoader__.load({
                               ),
                             ),
                           ),
+                          h('div', { style: { fontSize: 10.5, color: C.text3, marginTop: -4 } }, t('bankMaxTokensHint')),
                           bankToggle(t('bankReranking'), 'enable_reranking', t('bankRerankingHint')),
                           bankToggle(t('bankObservations'), 'enable_observations', t('bankObservationsHint')),
                           bankToggle(t('bankAutoConsolidation'), 'enable_auto_consolidation', t('bankAutoConsolidationHint')),
