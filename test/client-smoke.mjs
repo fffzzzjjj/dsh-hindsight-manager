@@ -62,7 +62,7 @@ const mod = captured.factory((specifier) => {
 });
 
 if (typeof mod.apply !== 'function') note('missing apply');
-if (mod.inject?.join(',') !== 'slots,locale') note(`inject = ${mod.inject}`);
+if (mod.inject?.join(',') !== 'slots,locale,layout,uiWorkspace') note(`inject = ${mod.inject}`);
 
 // ── recording ctx ─────────────────────────────────────────────────────────────
 const registrations = [];
@@ -90,6 +90,11 @@ const ctx = {
       return () => {};
     },
   },
+  layout: { selectPanel() {} },
+  get(name) {
+    if (name === 'uiWorkspace') return { pickDirectory: async () => 'D:\\picked-cache' };
+    return undefined;
+  },
 };
 
 mod.apply(ctx);
@@ -115,6 +120,15 @@ if (row) {
       note(`row icon threw for owner ${JSON.stringify(owner)}: ${error.message}`);
     }
   }
+}
+
+// ── the cache picker is injected and reaches the workspace service ───────────
+const mainInject = main?.options?.inject?.();
+if (typeof mainInject?.pickDirectory !== 'function') {
+  note('main panel did not receive pickDirectory');
+} else {
+  const picked = await mainInject.pickDirectory();
+  if (picked !== 'D:\\picked-cache') note(`pickDirectory returned ${JSON.stringify(picked)}`);
 }
 
 // ── render once with the fallback translator ─────────────────────────────────

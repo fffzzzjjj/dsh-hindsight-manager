@@ -1446,15 +1446,17 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), `${NS}: dictionaries`);
       const t = localeTranslator(ctx);
 
-      /** Native directory chooser through the workspace service, when mounted. */
+      /** Directory chooser through the workspace service (injected below). */
       const pickDirectory = async () => {
         let service;
         try {
-          service = ctx.uiWorkspace ?? ctx.get?.('uiWorkspace');
-        } catch {
-          service = undefined;
+          service = ctx.get('uiWorkspace');
+        } catch (error) {
+          throw new Error(`${t('pickerUnavailable')} (${error?.message ?? error})`);
         }
-        if (typeof service?.pickDirectory !== 'function') throw new Error(t('pickerUnavailable'));
+        if (typeof service?.pickDirectory !== 'function') {
+          throw new Error(`${t('pickerUnavailable')} (uiWorkspace.pickDirectory missing)`);
+        }
         return service.pickDirectory();
       };
 
@@ -1478,22 +1480,13 @@ window.__ModuleLoader__.load({
 
       // Foot-of-sidebar status, directly above the account row.
       ctx.slots.inject('sidebar.footer.action', () => {
-        let layout;
-        try {
-          layout = ctx.layout ?? ctx.get?.('layout');
-        } catch {
-          layout = undefined;
-        }
-        const open =
-          typeof layout?.selectPanel === 'function'
-            ? () => {
-                try {
-                  layout.selectPanel(PANEL_ID);
-                } catch {
-                  // navigation is best-effort
-                }
-              }
-            : undefined;
+        const open = () => {
+          try {
+            ctx.layout?.selectPanel?.(PANEL_ID);
+          } catch {
+            // navigation is best-effort
+          }
+        };
         const off = ctx.slots.register(
           {
             name: 'sidebar.footer.action',
@@ -1508,6 +1501,6 @@ window.__ModuleLoader__.load({
       });
     }
 
-    return { name: NS, inject: ['slots', 'locale'], apply };
+    return { name: NS, inject: ['slots', 'locale', 'layout', 'uiWorkspace'], apply };
   },
 });
