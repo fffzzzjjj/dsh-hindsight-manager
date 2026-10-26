@@ -24,6 +24,8 @@ Manage the local [Hindsight](https://hindsight.vectorize.io) memory daemon from 
 | **退出随停** | 独立看门狗进程盯着 DSH 主进程，DSH 一退就停掉守护进程并释放内存 |
 | **状态只读** | 运行状态是**不可点击**的文字 + 颜色点。启动和停止是**两个独立按钮**，各自在不适用的状态下禁用 |
 | **记忆库概况** | 文档数、事实数、关联数、观察数 |
+| **库健康度** | 最近写入/整理时间、待处理与失败操作、事实构成，以及「测一次检索」的耗时/命中数/约多少 token |
+| **库参数** | 召回 token 上限、预算策略（固定/自适应）、重排开关、观察生成、自动整理、抽取模式——写进 Hindsight 库配置，可随时改回 |
 | **选择记忆库** | 「记忆库」卡片里可以直接切换查看哪个库（自动/医药集团/DSH/…）；切换只影响查看，写记忆仍按会话工作区走 |
 | **记忆图谱** | 实体共现图：默认聚焦最高频实体、两跳径向；可切「全图」看整张网络；点节点在右侧列出它的记忆 |
 | **搜索记忆** | 语义检索（recall），结果就地展示 |
@@ -143,6 +145,9 @@ Host 半边在 Harness 的 web server 上注册（`ctx.inject(['webServer'])` + 
 | `POST /hindsight-manager/api/daemon` | `{"action":"start"\|"stop"}` |
 | `GET  /hindsight-manager/api/documents?limit=N` | 文档列表 |
 | `GET  /hindsight-manager/api/banks` | 可查看的记忆库列表 + 当前选中 |
+| `GET  /hindsight-manager/api/health` | 库健康度：stats + 最近一次测速 |
+| `POST /hindsight-manager/api/health/probe` | 用固定问题跑一次 recall，返回耗时/命中数/字符数 |
+| `GET/PATCH /hindsight-manager/api/bank-config` | 读写库级参数（白名单：recall_max_tokens、recall_budget_function、enable_reranking、enable_observations、enable_auto_consolidation、retain_extraction_mode） |
 | `GET  /hindsight-manager/api/graph` | 实体共现图（`nodes`/`edges` 扁平化，带 `firstSeen` 与 `span` 时间跨度，5 秒缓存） |
 | `GET  /hindsight-manager/api/entity?id=…&limit=N` | 单个实体 + 提及它的记忆 |
 | `POST /hindsight-manager/api/search` | `{"query":"…","budget":"low"}` |

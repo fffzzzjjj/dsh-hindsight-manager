@@ -240,6 +240,61 @@ async function saveConfig(patch) {
   return next;
 }
 
+// ── per-bank settings this panel may change ──────────────────────────────────
+// A deliberately small, explainable subset of Hindsight's bank config: the knobs
+// that trade recall cost/latency against quality, and the write-side LLM cost.
+
+const BANK_CONFIG_FIELDS = {
+  recall_max_tokens: { type: 'int', min: 256, max: 8192 },
+  recall_budget_function: { type: 'enum', values: ['fixed', 'adaptive'] },
+  enable_reranking: { type: 'bool' },
+  enable_observations: { type: 'bool' },
+  enable_auto_consolidation: { type: 'bool' },
+  retain_extraction_mode: { type: 'enum', values: ['concise', 'verbose', 'verbatim', 'chunks'] },
+};
+
+function pickBankConfig(config) {
+  const out = {};
+  for (const key of Object.keys(BANK_CONFIG_FIELDS)) out[key] = config?.[key] ?? null;
+  return out;
+}
+
+function sanitizeBankUpdates(input) {
+  const updates = {};
+  for (const [key, value] of Object.entries(input ?? {})) {
+    const spec = BANK_CONFIG_FIELDS[key];
+    if (!spec) {
+      const error = new Error(`unsupported bank setting: ${key}`);
+      error.status = 400;
+      throw error;
+    }
+    if (spec.type === 'bool') {
+      if (typeof value !== 'boolean') {
+        const error = new Error(`${key} must be a boolean`);
+        error.status = 400;
+        throw error;
+      }
+      updates[key] = value;
+    } else if (spec.type === 'int') {
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < spec.min || parsed > spec.max) {
+        const error = new Error(`${key} must be an integer between ${spec.min} and ${spec.max}`);
+        error.status = 400;
+        throw error;
+      }
+      updates[key] = parsed;
+    } else {
+      if (!spec.values.includes(value)) {
+        const error = new Error(`${key} must be one of ${spec.values.join(', ')}`);
+        error.status = 400;
+        throw error;
+      }
+      updates[key] = value;
+    }
+  }
+  return updates;
+}
+
 // ── network / proxy ───────────────────────────────────────────────────────────
 
 /**
@@ -979,6 +1034,9 @@ export function apply(ctx) {
 
   let graphCache = { bank: null, at: 0, data: null };
 
+  /** Last recall probe per bank: a fixed question, so timings stay comparable. */
+  const healthProbes = new Map();
+
   const pairKey = (left, right) => (left < right ? `${left}|${right}` : `${right}|${left}`);
   const laterIso = (left, right) => {
     if (!left) return right ?? null;
@@ -1300,6 +1358,86 @@ export function apply(ctx) {
           json(res, 200, await entityDetail(id, limit));
         } catch (error) {
           json(res, error?.status === 404 ? 404 : 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/health': async (_req, res) => {
+        try {
+          const bank = await resolveBank();
+          const stats = await fetchJson(bankUrl(bank, '/stats'));
+          json(res, 200, { ok: true, bank, stats, probe: healthProbes.get(bank) ?? null });
+        } catch (error) {
+          json(res, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/health/probe': async (req, res) => {
+        try {
+          const raw = await readBody(req);
+          const body = raw.length === 0 ? {} : JSON.parse(raw);
+          const query =
+            typeof body.query === 'string' && body.query.trim() !== ''
+              ? body.query.trim()
+              : '这个项目最近在做什么，有哪些决定';
+          const bank = await resolveBank();
+          const started = Date.now();
+          const result = await fetchJson(
+            bankUrl(bank, '/memories/recall'),
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json; charset=utf-8' },
+              body: JSON.stringify({ query, budget: 'low', max_tokens: 1024 }),
+            },
+            SEARCH_TIMEOUT_MS,
+          );
+          const results = Array.isArray(result.results) ? result.results : [];
+          const chars = results.reduce((total, item) => total + String(item?.text ?? '').length, 0);
+          const probe = {
+            at: Date.now(),
+            ms: Date.now() - started,
+            results: results.length,
+            chars,
+            tokens: Math.round(chars / 2),
+            query,
+          };
+          healthProbes.set(bank, probe);
+          json(res, 200, { ok: true, bank, probe });
+        } catch (error) {
+          json(res, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/bank-config': async (req, res) => {
+        try {
+          const raw = req.method === 'GET' ? '' : await readBody(req);
+          const bank = await resolveBank();
+          if (req.method === 'GET') {
+            const body = await fetchJson(bankUrl(bank, '/config'), undefined, GRAPH_TIMEOUT_MS);
+            json(res, 200, { ok: true, bank, config: pickBankConfig(body?.config ?? {}) });
+            return;
+          }
+          if (req.method !== 'PATCH' && req.method !== 'POST') {
+            json(res, 405, { ok: false, error: 'use GET or PATCH' });
+            return;
+          }
+          const body = raw.length === 0 ? {} : JSON.parse(raw);
+          const updates = sanitizeBankUpdates(body?.updates ?? body);
+          if (Object.keys(updates).length === 0) {
+            json(res, 400, { ok: false, error: 'no supported settings in the request' });
+            return;
+          }
+          const updated = await fetchJson(
+            bankUrl(bank, '/config'),
+            {
+              method: 'PATCH',
+              headers: { 'content-type': 'application/json; charset=utf-8' },
+              body: JSON.stringify({ updates }),
+            },
+            GRAPH_TIMEOUT_MS,
+          );
+          json(res, 200, { ok: true, bank, config: pickBankConfig(updated?.config ?? {}) });
+        } catch (error) {
+          json(res, error?.status ?? 500, { ok: false, error: error?.message ?? String(error) });
         }
       },
 

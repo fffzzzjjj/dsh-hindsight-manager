@@ -72,6 +72,34 @@ window.__ModuleLoader__.load({
       bankPending: '还没有记忆库，第一次对话结束后会自动创建。',
       bankAuto: '自动（最近写入）',
       bankSelectHint: '切换只影响这里查看的库；写记忆仍然按当前会话的工作区走。',
+      bankHealth: '库健康度',
+      bankHealthHint: '检索速度与后台整理的实时状态',
+      lastWrite: '最近写入',
+      lastConsolidated: '最近整理',
+      pendingOps: '待处理操作',
+      failedOps: '失败操作',
+      factBreakdown: '事实构成',
+      probe: '测一次检索',
+      probing: '检索中…',
+      probeHint: '用固定问题跑一次 recall，比较不同时期的耗时和返回量；不会改动记忆。',
+      probeResult: '{ms} ms · {results} 条 · 约 {tokens} tokens',
+      probeFailed: '测速失败',
+      bankConfig: '库参数',
+      bankConfigHint: '写进 Hindsight 库配置的设置，不是插件配置',
+      bankMaxTokens: '召回 token 上限',
+      bankBudget: '预算策略',
+      budgetFixed: '固定',
+      budgetAdaptive: '自适应',
+      bankExtraction: '抽取模式',
+      bankReranking: '启用重排',
+      bankRerankingHint: '关掉更快，但相关性会变差',
+      bankObservations: '生成观察',
+      bankObservationsHint: '后台用 LLM 把事实压缩成观察；关掉省钱，但失去高层结论',
+      bankAutoConsolidation: '自动整理',
+      bankAutoConsolidationHint: '关闭后新记忆不会自动整合',
+      bankConfigSaved: '已保存',
+      bankConfigFailed: '保存失败',
+      extrasMissing: '当前 host 还没加载这个接口，重启 DSH 后可用。',
       provider: '抽取模型',
       cache: '缓存位置',
       systemDefault: '系统默认位置',
@@ -230,6 +258,34 @@ window.__ModuleLoader__.load({
       bankPending: 'No bank yet — the first finished conversation creates it.',
       bankAuto: 'Auto (most recent)',
       bankSelectHint: 'Switching only changes what this page reads; writes still follow the session workspace.',
+      bankHealth: 'Bank health',
+      bankHealthHint: 'Live retrieval speed and background consolidation state',
+      lastWrite: 'Last write',
+      lastConsolidated: 'Last consolidated',
+      pendingOps: 'Pending operations',
+      failedOps: 'Failed operations',
+      factBreakdown: 'Fact mix',
+      probe: 'Time a retrieval',
+      probing: 'Retrieving…',
+      probeHint: 'Runs one recall with a fixed question so timings stay comparable; nothing is written.',
+      probeResult: '{ms} ms · {results} hits · ~{tokens} tokens',
+      probeFailed: 'Probe failed',
+      bankConfig: 'Bank settings',
+      bankConfigHint: 'Written into the Hindsight bank config, not the plugin config',
+      bankMaxTokens: 'Recall token cap',
+      bankBudget: 'Budget strategy',
+      budgetFixed: 'Fixed',
+      budgetAdaptive: 'Adaptive',
+      bankExtraction: 'Extraction mode',
+      bankReranking: 'Rerank',
+      bankRerankingHint: 'Turning it off is faster but less relevant',
+      bankObservations: 'Observations',
+      bankObservationsHint: 'Background LLM compresses facts into observations',
+      bankAutoConsolidation: 'Auto consolidation',
+      bankAutoConsolidationHint: 'When off, new memories stay raw',
+      bankConfigSaved: 'Saved',
+      bankConfigFailed: 'Could not save',
+      extrasMissing: 'The host has not loaded this endpoint yet; restart DSH.',
       provider: 'Extraction model',
       cache: 'Cache location',
       systemDefault: 'system default',
@@ -678,6 +734,14 @@ window.__ModuleLoader__.load({
       const [bankChoice, setBankChoice] = useState('');
       const [bankBusy, setBankBusy] = useState(false);
       const [bankMessage, setBankMessage] = useState(null);
+      const [health, setHealth] = useState(null);
+      const [probe, setProbe] = useState(null);
+      const [probing, setProbing] = useState(false);
+      const [bankConfig, setBankConfig] = useState(null);
+      const [bankDraft, setBankDraft] = useState({});
+      const [bankConfigBusy, setBankConfigBusy] = useState(false);
+      const [bankConfigMessage, setBankConfigMessage] = useState(null);
+      const [extrasMissing, setExtrasMissing] = useState(false);
       const [query, setQuery] = useState('');
       const [results, setResults] = useState(null);
       const [searching, setSearching] = useState(false);
@@ -750,6 +814,47 @@ window.__ModuleLoader__.load({
         }
       }, []);
 
+      const loadHealth = useCallback(async () => {
+        try {
+          const res = await fetch(`${API}/health`, { cache: 'no-store' });
+          if (res.status === 404) {
+            if (alive.current) setExtrasMissing(true);
+            return;
+          }
+          const body = await res.json().catch(() => ({}));
+          if (!alive.current) return;
+          if (!res.ok || body.ok === false) return;
+          setExtrasMissing(false);
+          setHealth(body);
+          if (body.probe) setProbe(body.probe);
+        } catch {
+          // the status card already reports service trouble
+        }
+      }, []);
+
+      const loadBankConfig = useCallback(async () => {
+        try {
+          const res = await fetch(`${API}/bank-config`, { cache: 'no-store' });
+          if (res.status === 404) {
+            if (alive.current) {
+              setExtrasMissing(true);
+              setBankConfig(null);
+            }
+            return;
+          }
+          const body = await res.json().catch(() => ({}));
+          if (!alive.current) return;
+          if (!res.ok || body.ok === false) {
+            setBankConfig(null);
+            return;
+          }
+          setBankConfig(body.config ?? {});
+          setBankDraft(body.config ?? {});
+        } catch {
+          if (alive.current) setBankConfig(null);
+        }
+      }, []);
+
       const loadDocuments = useCallback(async () => {
         try {
           const res = await fetch(`${API}/documents?limit=20`, { cache: 'no-store' });
@@ -781,6 +886,16 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (data?.running) loadBanks();
       }, [data?.running, loadBanks]);
+
+      useEffect(() => {
+        if (!data?.running) {
+          setHealth(null);
+          setBankConfig(null);
+          return;
+        }
+        loadHealth();
+        loadBankConfig();
+      }, [data?.running, data?.bank, loadHealth, loadBankConfig]);
 
       useEffect(() => {
         if (data?.running) loadDocuments();
@@ -870,6 +985,62 @@ window.__ModuleLoader__.load({
         },
         [refreshAll, loadBanks, t],
       );
+
+      const runProbe = useCallback(async () => {
+        setProbing(true);
+        setProbe(null);
+        try {
+          const res = await fetch(`${API}/health/probe`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify({}),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          if (alive.current) setProbe(body.probe ?? null);
+        } catch (error) {
+          if (alive.current) setProbe({ error: error.message ?? String(error), at: Date.now() });
+        } finally {
+          if (alive.current) setProbing(false);
+        }
+      }, []);
+
+      const saveBankConfig = useCallback(async () => {
+        if (bankConfig === null) return;
+        setBankConfigBusy(true);
+        setBankConfigMessage(null);
+        try {
+          const updates = {
+            recall_max_tokens: Math.min(8192, Math.max(256, Math.round(Number(bankDraft.recall_max_tokens) || 2048))),
+            recall_budget_function: bankDraft.recall_budget_function === 'adaptive' ? 'adaptive' : 'fixed',
+            enable_reranking: bankDraft.enable_reranking !== false,
+            enable_observations: bankDraft.enable_observations !== false,
+            enable_auto_consolidation: bankDraft.enable_auto_consolidation !== false,
+            retain_extraction_mode: ['concise', 'verbose', 'verbatim', 'chunks'].includes(bankDraft.retain_extraction_mode)
+              ? bankDraft.retain_extraction_mode
+              : 'concise',
+          };
+          const res = await fetch(`${API}/bank-config`, {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify({ updates }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          if (alive.current) {
+            setBankConfig(body.config ?? {});
+            setBankDraft(body.config ?? {});
+            setBankConfigMessage(t('bankConfigSaved'));
+          }
+          loadHealth();
+        } catch (error) {
+          if (alive.current) setBankConfigMessage(`${t('bankConfigFailed')}: ${error.message ?? String(error)}`);
+        } finally {
+          if (alive.current) setBankConfigBusy(false);
+        }
+      }, [bankConfig, bankDraft, loadHealth, t]);
 
       const pickCacheDir = useCallback(async () => {
         if (pickDirectoryProp === null) {
@@ -1006,6 +1177,28 @@ window.__ModuleLoader__.load({
           // cosmetic
         }
       };
+
+      const bankSelectStyle = {
+        border: `1px solid ${C.border2}`,
+        background: C.base,
+        color: C.text,
+        borderRadius: 7,
+        padding: '4px 6px',
+        fontSize: 11.5,
+      };
+      const bankToggle = (label, key, hint) =>
+        h(
+          'label',
+          { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' } },
+          h('input', {
+            type: 'checkbox',
+            checked: bankDraft[key] === true,
+            onChange: (event) => setBankDraft({ ...bankDraft, [key]: event.target.checked }),
+            style: { width: 14, height: 14, cursor: 'pointer' },
+          }),
+          h('span', null, label),
+          h('span', { style: { color: C.text3, fontSize: 11 } }, hint),
+        );
 
       return h(
         'div',
@@ -1518,6 +1711,167 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
+
+              // bank health
+              data?.running
+                ? h(
+                    Card,
+                    null,
+                    h(SectionTitle, { hint: t('bankHealthHint') }, t('bankHealth')),
+                    extrasMissing
+                      ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('extrasMissing'))
+                      : health
+                      ? h(
+                          'div',
+                          { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
+                          h(
+                            Row,
+                            { label: t('lastWrite') },
+                            health.stats?.last_memory_write_at
+                              ? `${timeAgo(health.stats.last_memory_write_at)} · ${shortDate(health.stats.last_memory_write_at)}`
+                              : '—',
+                          ),
+                          h(
+                            Row,
+                            { label: t('lastConsolidated') },
+                            health.stats?.last_consolidated_at
+                              ? `${timeAgo(health.stats.last_consolidated_at)} · ${shortDate(health.stats.last_consolidated_at)}`
+                              : '—',
+                          ),
+                          h(
+                            Row,
+                            { label: t('pendingOps') },
+                            `${fmt(health.stats?.pending_operations ?? 0)} / ${t('failedOps')} ${fmt(health.stats?.failed_operations ?? 0)}`,
+                          ),
+                          h(
+                            Row,
+                            { label: t('factBreakdown') },
+                            h(
+                              'span',
+                              { style: { fontSize: 11.5, color: C.text2 } },
+                              `world ${fmt(health.stats?.nodes_by_fact_type?.world ?? 0)} · experience ${fmt(
+                                health.stats?.nodes_by_fact_type?.experience ?? 0,
+                              )} · observation ${fmt(health.stats?.nodes_by_fact_type?.observation ?? 0)}`,
+                            ),
+                          ),
+                        )
+                      : h('div', { style: { fontSize: 12, color: C.text3 } }, t('stateUnknown')),
+                    extrasMissing
+                      ? null
+                      : h(
+                      'div',
+                      { style: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' } },
+                      h(Button, { onClick: runProbe, busy: probing }, probing ? t('probing') : t('probe')),
+                      probe?.error
+                        ? h('span', { style: { fontSize: 11.5, color: C.err } }, `${t('probeFailed')}: ${probe.error}`)
+                        : probe
+                          ? h(
+                              'span',
+                              { style: { fontSize: 11.5, color: C.text3 } },
+                              `${fill(t('probeResult'), {
+                                ms: probe.ms,
+                                results: probe.results,
+                                tokens: fmt(probe.tokens),
+                              })} · ${timeAgo(new Date(probe.at).toISOString())}`,
+                            )
+                          : null,
+                    ),
+                    extrasMissing ? null : h('div', { style: { fontSize: 10.5, color: C.text3, marginTop: 6 } }, t('probeHint')),
+                  )
+                : null,
+
+              // bank settings
+              data?.running
+                ? h(
+                    Card,
+                    null,
+                    h(SectionTitle, { hint: t('bankConfigHint') }, t('bankConfig')),
+                    extrasMissing
+                      ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('extrasMissing'))
+                      : bankConfig === null
+                      ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('stateUnknown'))
+                      : h(
+                          'div',
+                          { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+                          h(
+                            'div',
+                            { style: { display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-end' } },
+                            h(
+                              'label',
+                              { style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 } },
+                              h('span', { style: { color: C.text2 } }, t('bankMaxTokens')),
+                              h('input', {
+                                type: 'number',
+                                min: 256,
+                                max: 8192,
+                                step: 128,
+                                value: bankDraft.recall_max_tokens ?? '',
+                                onChange: (event) =>
+                                  setBankDraft({ ...bankDraft, recall_max_tokens: Number(event.target.value) }),
+                                style: { ...inputStyle, width: 110, flex: 'none' },
+                              }),
+                            ),
+                            h(
+                              'label',
+                              { style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 } },
+                              h('span', { style: { color: C.text2 } }, t('bankBudget')),
+                              h(
+                                'select',
+                                {
+                                  value: bankDraft.recall_budget_function ?? 'fixed',
+                                  onChange: (event) =>
+                                    setBankDraft({ ...bankDraft, recall_budget_function: event.target.value }),
+                                  style: bankSelectStyle,
+                                },
+                                h('option', { value: 'fixed' }, t('budgetFixed')),
+                                h('option', { value: 'adaptive' }, t('budgetAdaptive')),
+                              ),
+                            ),
+                            h(
+                              'label',
+                              { style: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 } },
+                              h('span', { style: { color: C.text2 } }, t('bankExtraction')),
+                              h(
+                                'select',
+                                {
+                                  value: bankDraft.retain_extraction_mode ?? 'concise',
+                                  onChange: (event) =>
+                                    setBankDraft({ ...bankDraft, retain_extraction_mode: event.target.value }),
+                                  style: bankSelectStyle,
+                                },
+                                ['concise', 'verbose', 'verbatim', 'chunks'].map((mode) =>
+                                  h('option', { key: mode, value: mode }, mode),
+                                ),
+                              ),
+                            ),
+                          ),
+                          bankToggle(t('bankReranking'), 'enable_reranking', t('bankRerankingHint')),
+                          bankToggle(t('bankObservations'), 'enable_observations', t('bankObservationsHint')),
+                          bankToggle(t('bankAutoConsolidation'), 'enable_auto_consolidation', t('bankAutoConsolidationHint')),
+                          h(
+                            'div',
+                            { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' } },
+                            h(
+                              Button,
+                              { onClick: saveBankConfig, primary: true, busy: bankConfigBusy },
+                              bankConfigBusy ? t('saving') : t('save'),
+                            ),
+                            bankConfigMessage
+                              ? h(
+                                  'span',
+                                  {
+                                    style: {
+                                      fontSize: 11,
+                                      color: bankConfigMessage.startsWith(t('bankConfigFailed')) ? C.err : C.ok,
+                                    },
+                                  },
+                                  bankConfigMessage,
+                                )
+                              : null,
+                          ),
+                        ),
+                  )
+                : null,
 
               // diagnostics
               setup

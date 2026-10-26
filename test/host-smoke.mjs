@@ -122,6 +122,9 @@ const expected = [
   '/hindsight-manager/api/graph',
   '/hindsight-manager/api/entity',
   '/hindsight-manager/api/banks',
+  '/hindsight-manager/api/health',
+  '/hindsight-manager/api/health/probe',
+  '/hindsight-manager/api/bank-config',
   '/hindsight-manager/api/search',
   '/hindsight-manager/api/config',
 ];
@@ -244,6 +247,65 @@ if (bankOk) {
   if (bankOk.status !== 200) note(`config bank status = ${bankOk.status}`);
   const written = JSON.parse(readFileSync(join(home, 'storages', 'dsh-hindsight-manager', 'config.json'), 'utf8'));
   if (written.bank !== 'coding-agent::DSH') note(`config bank not persisted: ${JSON.stringify(written)}`);
+}
+
+// ── bank health and per-bank settings ────────────────────────────────────────
+const healthCall = await call('/hindsight-manager/api/health');
+if (healthCall) {
+  if (healthCall.status === 200) {
+    if (!healthCall.json?.stats || typeof healthCall.json.stats !== 'object') note('health has no stats');
+  } else if (healthCall.status === 500) {
+    if (healthCall.json?.ok !== false) note('health failure body is not ok:false');
+  } else {
+    note(`health status = ${healthCall.status}`);
+  }
+}
+
+const bankConfigGet = await call('/hindsight-manager/api/bank-config', { method: 'GET' });
+if (bankConfigGet) {
+  if (bankConfigGet.status === 200) {
+    const config = bankConfigGet.json?.config ?? {};
+    for (const key of ['recall_max_tokens', 'enable_reranking', 'enable_observations']) {
+      if (!(key in config)) note(`bank-config GET is missing ${key}`);
+    }
+  } else if (bankConfigGet.status === 500) {
+    if (bankConfigGet.json?.ok !== false) note('bank-config failure body is not ok:false');
+  } else {
+    note(`bank-config GET status = ${bankConfigGet.status}`);
+  }
+}
+
+const bankConfigUnknown = await call('/hindsight-manager/api/bank-config', {
+  method: 'PATCH',
+  body: JSON.stringify({ updates: { nope: true } }),
+});
+if (bankConfigUnknown && bankConfigUnknown.status !== 400) {
+  note(`bank-config unknown key status = ${bankConfigUnknown.status}`);
+}
+
+const bankConfigBadValue = await call('/hindsight-manager/api/bank-config', {
+  method: 'PATCH',
+  body: JSON.stringify({ updates: { recall_max_tokens: 'many' } }),
+});
+if (bankConfigBadValue && bankConfigBadValue.status !== 400) {
+  note(`bank-config bad value status = ${bankConfigBadValue.status}`);
+}
+
+const bankConfigOk = await call('/hindsight-manager/api/bank-config', {
+  method: 'PATCH',
+  body: JSON.stringify({ updates: { enable_reranking: true } }),
+});
+if (bankConfigOk && ![200, 500].includes(bankConfigOk.status)) note(`bank-config PATCH status = ${bankConfigOk.status}`);
+
+const probeCall = await call('/hindsight-manager/api/health/probe', { method: 'POST', body: '{}' });
+if (probeCall) {
+  if (probeCall.status === 200) {
+    if (typeof probeCall.json?.probe?.ms !== 'number') note('probe has no duration');
+  } else if (probeCall.status === 500) {
+    if (probeCall.json?.ok !== false) note('probe failure body is not ok:false');
+  } else {
+    note(`probe status = ${probeCall.status}`);
+  }
 }
 
 // ── search: an empty query is a client error, not a crash ────────────────────
