@@ -114,10 +114,16 @@ window.__ModuleLoader__.load({
       cleanupStale: '长期未动',
       cleanupForgotten: '已遗忘',
       cleanupGroups: ' 组',
+      cleanupObservations: '观察',
+      cleanupKeepHint: '建议保留',
+      cleanupKeepOne: '保留 1 条',
+      cleanupGroupFull: '有 {n} 组会被整组失效，等于把这条记忆删掉',
+      cleanupFixKeep: '每组保留一条',
       cleanupDays: '天',
       cleanupEmptyDup: '没有发现文本高度相似的记忆。',
       cleanupEmptyStale: '没有超过 {days} 天未变动的记忆。',
       cleanupEmptyForgotten: '还没有失效的记忆。',
+      cleanupEmptyObservations: '还没有观察。',
       cleanupSelectAll: '全选可选',
       cleanupClear: '清空选择',
       cleanupInvalidate: '失效选中（{n}）',
@@ -347,10 +353,16 @@ window.__ModuleLoader__.load({
       cleanupStale: 'Untouched',
       cleanupForgotten: 'Forgotten',
       cleanupGroups: ' groups',
+      cleanupObservations: 'Observations',
+      cleanupKeepHint: 'keep this',
+      cleanupKeepOne: 'keep 1',
+      cleanupGroupFull: '{n} groups would be invalidated entirely — that deletes the fact',
+      cleanupFixKeep: 'Keep one per group',
       cleanupDays: 'd',
       cleanupEmptyDup: 'No highly similar memories found.',
       cleanupEmptyStale: 'Nothing untouched for over {days} days.',
       cleanupEmptyForgotten: 'Nothing invalidated yet.',
+      cleanupEmptyObservations: 'No observations yet.',
       cleanupSelectAll: 'Select all',
       cleanupClear: 'Clear',
       cleanupInvalidate: 'Invalidate selected ({n})',
@@ -3146,9 +3158,40 @@ window.__ModuleLoader__.load({
       const duplicates = Array.isArray(data.duplicates) ? data.duplicates : [];
       const stale = Array.isArray(data.stale) ? data.stale : [];
       const forgotten = Array.isArray(data.forgotten) ? data.forgotten : [];
-      const rows = filter === 'duplicates' ? duplicates.flat() : filter === 'stale' ? stale : forgotten;
+      const observations = Array.isArray(data.observations) ? data.observations : [];
+      const rows =
+        filter === 'duplicates'
+          ? duplicates.flat()
+          : filter === 'stale'
+            ? stale
+            : filter === 'observations'
+              ? observations
+              : forgotten;
+
+      // In a duplicate group one copy is the keeper (newest mention, then longest text).
+      const keepIds = new Set();
+      for (const group of duplicates) {
+        const sorted = [...group].sort(
+          (left, right) =>
+            String(right.date ?? '').localeCompare(String(left.date ?? '')) ||
+            String(right.text ?? '').length - String(left.text ?? '').length,
+        );
+        if (sorted[0]) keepIds.add(sorted[0].id);
+      }
+      const fullGroups =
+        filter === 'duplicates' ? duplicates.filter((group) => group.every((item) => selected.has(item.id))) : [];
+      const fixKeep = () => {
+        setSelected((current) => {
+          const next = new Set(current);
+          for (const id of keepIds) next.delete(id);
+          return next;
+        });
+        setError(null);
+      };
       const actionable = (item) => (filter === 'forgotten' ? true : item.factType !== 'observation');
-      const pickableIds = rows.filter(actionable).map((item) => item.id);
+      const pickableIds = rows
+        .filter((item) => actionable(item) && !(filter === 'duplicates' && keepIds.has(item.id)))
+        .map((item) => item.id);
       const allPicked = pickableIds.length > 0 && pickableIds.every((id) => selected.has(id));
 
       const toggle = (id) => {
@@ -3169,6 +3212,10 @@ window.__ModuleLoader__.load({
         const ids = [...selected];
         if (ids.length === 0) return;
         if (action === 'invalidate') {
+          if (fullGroups.length > 0) {
+            setError(fill(t('cleanupGroupFull'), { n: fullGroups.length }));
+            return;
+          }
           if (reason.trim() === '') {
             setError(t('cleanupReasonRequired'));
             return;
@@ -3268,6 +3315,9 @@ window.__ModuleLoader__.load({
               filter === 'forgotten' && item.invalidatedAt ? h('span', null, `${t('cleanupForgotten')} · ${shortDate(item.invalidatedAt)}`) : null,
               filter === 'forgotten' && item.reason ? h('span', null, item.reason) : null,
               item.factType === 'observation' ? h('span', { style: { color: C.warn } }, t('cleanupObservation')) : null,
+              filter === 'duplicates' && keepIds.has(item.id)
+                ? h('span', { style: { color: C.ok } }, t('cleanupKeepHint'))
+                : null,
               item.factType === 'observation' ? h('span', { style: { color: C.text3 } }, t('historyClick')) : null,
 
             ),
@@ -3284,7 +3334,9 @@ window.__ModuleLoader__.load({
             ? t('cleanupEmptyDup')
             : filter === 'stale'
               ? fill(t('cleanupEmptyStale'), { days: staleDays })
-              : t('cleanupEmptyForgotten'),
+              : filter === 'observations'
+                ? t('cleanupEmptyObservations')
+                : t('cleanupEmptyForgotten'),
         );
       } else if (filter === 'duplicates') {
         listBody = h(
@@ -3294,7 +3346,11 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { key: `g${index}`, style: { marginTop: index === 0 ? 0 : 8 } },
-              h('div', { style: { fontSize: 10, color: C.text3, padding: '4px 4px 0' } }, `${index + 1} · ${group.length}`),
+              h(
+                'div',
+                { style: { fontSize: 10, color: C.text3, padding: '4px 4px 0' } },
+                `${index + 1} · ${group.length} · ${t('cleanupKeepOne')}`,
+              ),
               ...group.map(row),
             ),
           ),
@@ -3334,6 +3390,7 @@ window.__ModuleLoader__.load({
           { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
           chip('duplicates', `${t('cleanupDuplicates')} ${fmt(counts.duplicateGroups ?? 0)}${t('cleanupGroups')}`),
           chip('stale', `${t('cleanupStale')} ${fmt(counts.stale ?? 0)}`),
+          chip('observations', `${t('cleanupObservations')} ${fmt(counts.observations ?? 0)}`),
           chip('forgotten', `${t('cleanupForgotten')} ${fmt(counts.invalidated ?? 0)}`),
         ),
         h(
@@ -3350,7 +3407,7 @@ window.__ModuleLoader__.load({
           listBody,
         ),
         historyId ? h(ObservationHistory, { t, id: historyId, onClose: () => setHistoryId(null) }) : null,
-        rows.length > 0
+        rows.length > 0 && pickableIds.length > 0
           ? h(
               'div',
               { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
@@ -3414,10 +3471,39 @@ window.__ModuleLoader__.load({
                       style: { ...inputStyle, width: 80, flex: 'none', padding: '5px 9px', fontSize: 11.5 },
                     }),
                   ),
+                  fullGroups.length > 0
+                    ? h(
+                        'div',
+                        { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 11.5, color: C.warn } },
+                        h('span', null, fill(t('cleanupGroupFull'), { n: fullGroups.length })),
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            onClick: fixKeep,
+                            style: {
+                              appearance: 'none',
+                              border: 'none',
+                              background: 'transparent',
+                              color: C.text2,
+                              fontSize: 11.5,
+                              cursor: 'pointer',
+                              padding: 0,
+                              textDecoration: 'underline',
+                            },
+                          },
+                          t('cleanupFixKeep'),
+                        ),
+                      )
+                    : null,
                   h(
                     'div',
                     { style: { display: 'flex', gap: 8 } },
-                    h(Button, { onClick: () => setStep(2), disabled: selected.size === 0 || selected.size > limit }, t('cleanupNext')),
+                    h(
+                      Button,
+                      { onClick: () => setStep(2), disabled: selected.size === 0 || selected.size > limit || fullGroups.length > 0 },
+                      t('cleanupNext'),
+                    ),
                     h(Button, { onClick: () => setStep(0) }, t('cleanupCancel')),
                   ),
                 )

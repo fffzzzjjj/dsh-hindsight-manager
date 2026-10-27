@@ -286,6 +286,14 @@ if (typeof handles.CleanupPanel !== 'function') {
       (node.children ?? []).forEach(walk);
     })(tree);
     if (checkboxes !== 2) note(`cleanup panel drew ${checkboxes} duplicate rows, expected 2`);
+    let keepHints = 0;
+    (function walk(node) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (node.type === 'span' && (node.children ?? []).includes('cleanupKeepHint')) keepHints += 1;
+      (node.children ?? []).forEach(walk);
+    })(tree);
+    if (keepHints < 1) note('duplicate group does not mark a keeper');
   } catch (error) {
     note(`CleanupPanel threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
   }

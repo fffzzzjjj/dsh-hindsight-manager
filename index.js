@@ -1274,6 +1274,22 @@ export function apply(ctx) {
       if (items.length === 0 || valid.length >= total) break;
     }
 
+    const observationPage = await fetchJson(
+      bankUrl(bank, '/memories/list?limit=200&type=observation&state=valid'),
+      undefined,
+      GRAPH_TIMEOUT_MS,
+    );
+    const observations = (observationPage.items ?? [])
+      .map((item) => ({
+        id: item.id,
+        text: item.text ?? '',
+        factType: item.fact_type ?? 'observation',
+        date: item.date ?? null,
+        updatedAt: item.updated_at ?? item.date ?? null,
+      }))
+      .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')))
+      .slice(0, 200);
+
     const forgottenPage = await fetchJson(
       bankUrl(bank, '/memories/list?limit=100&state=invalidated'),
       undefined,
@@ -1319,9 +1335,11 @@ export function apply(ctx) {
         duplicateGroups: groups.length,
         duplicateItems: groups.reduce((sum, group) => sum + group.length, 0),
         stale: stale.length,
+        observations: Number(observationPage.total ?? observations.length),
       },
       duplicates: groups,
       stale,
+      observations,
       forgotten,
     };
     cleanupCache.set(key, { at: Date.now(), data });
