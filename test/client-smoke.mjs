@@ -325,14 +325,14 @@ if (typeof handles.CleanupPanel === 'function') {
         forgotten: [],
       },
     });
-    let historyButtons = 0;
+    let clickableRows = 0;
     (function walk(node) {
       if (!node || typeof node !== 'object') return;
       if (Array.isArray(node)) { node.forEach(walk); return; }
-      if (node.type === 'button' && (node.children ?? []).includes('history')) historyButtons += 1;
+      if (node.type === 'label' && typeof node.props?.onClick === 'function') clickableRows += 1;
       (node.children ?? []).forEach(walk);
     })(stale);
-    if (historyButtons < 1) note('cleanup stale list has no history button');
+    if (clickableRows < 1) note('cleanup stale observation row does not open history');
   } catch (error) {
     note(`CleanupPanel stale threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
   }

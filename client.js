@@ -176,6 +176,7 @@ window.__ModuleLoader__.load({
       graphViewAll: '查看全部 {n} 条',
       graphCollapse: '收起',
       history: '历史',
+      historyClick: '点击查看历史',
       historyTitle: '观察历史',
       historyEmpty: '这条观察还没有版本记录。',
       historyLoading: '加载中…',
@@ -408,6 +409,7 @@ window.__ModuleLoader__.load({
       graphViewAll: 'Show all {n}',
       graphCollapse: 'Collapse',
       history: 'History',
+      historyClick: 'click to view history',
       historyTitle: 'Observation history',
       historyEmpty: 'This observation has no recorded versions yet.',
       historyLoading: 'Loading…',
@@ -3031,13 +3033,12 @@ window.__ModuleLoader__.load({
                     'div',
                     { style: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: C.text3 } },
                     h(Dot, { color: FACT_COLORS[memory.factType] ?? FACT_COLORS.fact, size: 5 }),
-                    h('span', { style: { color: C.text2 } }, memory.factType),
-                    h('span', { style: { marginLeft: 'auto' } }, shortDate(memory.date)),
                     memory.factType === 'observation'
                       ? h(
                           'button',
                           {
                             type: 'button',
+                            title: t('history'),
                             onClick: (event) => {
                               event.preventDefault();
                               event.stopPropagation();
@@ -3047,16 +3048,18 @@ window.__ModuleLoader__.load({
                               appearance: 'none',
                               border: 'none',
                               background: 'transparent',
-                              color: C.text3,
+                              color: C.text2,
                               fontSize: 10,
                               cursor: 'pointer',
                               padding: 0,
                               textDecoration: 'underline dotted',
                             },
                           },
-                          t('history'),
+                          memory.factType,
                         )
-                      : null,
+                      : h('span', { style: { color: C.text2 } }, memory.factType),
+                    h('span', { style: { marginLeft: 'auto' } }, shortDate(memory.date)),
+
                   ),
                   h(
                     'div',
@@ -3220,18 +3223,26 @@ window.__ModuleLoader__.load({
       const row = (item) => {
         const canPick = actionable(item);
         const checked = selected.has(item.id);
+        const isObservation = item.factType === 'observation';
         return h(
           'label',
           {
             key: item.id,
+            onClick: isObservation
+              ? (event) => {
+                  event.preventDefault();
+                  setHistoryId((current) => (current === item.id ? null : item.id));
+                }
+              : undefined,
             style: {
               display: 'flex',
               gap: 8,
               alignItems: 'flex-start',
               padding: '7px 4px',
               borderBottom: `1px solid ${C.border}`,
-              cursor: canPick ? 'pointer' : 'not-allowed',
-              opacity: canPick ? 1 : 0.55,
+              cursor: isObservation || canPick ? 'pointer' : 'not-allowed',
+              opacity: isObservation ? 1 : canPick ? 1 : 0.55,
+              background: isObservation && historyId === item.id ? C.surface2 : 'transparent',
             },
           },
           h('input', {
@@ -3257,30 +3268,8 @@ window.__ModuleLoader__.load({
               filter === 'forgotten' && item.invalidatedAt ? h('span', null, `${t('cleanupForgotten')} · ${shortDate(item.invalidatedAt)}`) : null,
               filter === 'forgotten' && item.reason ? h('span', null, item.reason) : null,
               item.factType === 'observation' ? h('span', { style: { color: C.warn } }, t('cleanupObservation')) : null,
-              item.factType === 'observation'
-                ? h(
-                    'button',
-                    {
-                      type: 'button',
-                      onClick: (event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setHistoryId((current) => (current === item.id ? null : item.id));
-                      },
-                      style: {
-                        appearance: 'none',
-                        border: 'none',
-                        background: 'transparent',
-                        color: C.text3,
-                        fontSize: 10,
-                        cursor: 'pointer',
-                        padding: 0,
-                        textDecoration: 'underline dotted',
-                      },
-                    },
-                    t('history'),
-                  )
-                : null,
+              item.factType === 'observation' ? h('span', { style: { color: C.text3 } }, t('historyClick')) : null,
+
             ),
           ),
         );
