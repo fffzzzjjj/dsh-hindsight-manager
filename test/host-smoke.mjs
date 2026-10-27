@@ -125,6 +125,7 @@ const expected = [
   '/hindsight-manager/api/banks',
   '/hindsight-manager/api/health',
   '/hindsight-manager/api/cleanup',
+  '/hindsight-manager/api/update',
   '/hindsight-manager/api/memories/action',
   '/hindsight-manager/api/health/probe',
   '/hindsight-manager/api/bank-config',
@@ -361,6 +362,19 @@ if (actionEmpty && actionEmpty.status !== 400) note(`action empty ids status = $
 
 const historyNoId = await call('/hindsight-manager/api/memory/history');
 if (historyNoId && historyNoId.status !== 400) note(`history without id status = ${historyNoId.status}`);
+
+// ── update check reports a version or a network failure ─────────────────────
+const updateCall = await call('/hindsight-manager/api/update');
+if (updateCall) {
+  if (updateCall.status === 200) {
+    if (typeof updateCall.json?.current !== 'string') note('update payload has no current version');
+    if (typeof updateCall.json?.updateAvailable !== 'boolean') note('update payload has no updateAvailable');
+  } else if (updateCall.status === 502) {
+    if (updateCall.json?.ok !== false) note('update failure body is not ok:false');
+  } else {
+    note(`update status = ${updateCall.status}`);
+  }
+}
 
 // ── search: an empty query is a client error, not a crash ────────────────────
 const searchEmpty = await call('/hindsight-manager/api/search', { method: 'POST', body: JSON.stringify({}) });

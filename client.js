@@ -145,6 +145,13 @@ window.__ModuleLoader__.load({
       cleanupOpen: '打开清理',
       cleanupPending: '待清理',
       cleanupScanFailed: '扫描失败',
+      versionLabel: '插件版本',
+      checkUpdate: '检查更新',
+      checkingUpdate: '检查中…',
+      updateLatest: '已是最新版本',
+      updateAvailable: '有新版本',
+      updateFailed: '检查更新失败',
+      updateHow: '更新：git pull 后重新安装，再重启 DSH',
       provider: '抽取模型',
       cache: '缓存位置',
       systemDefault: '系统默认位置',
@@ -384,6 +391,13 @@ window.__ModuleLoader__.load({
       cleanupOpen: 'Open cleanup',
       cleanupPending: 'Pending cleanup',
       cleanupScanFailed: 'Scan failed',
+      versionLabel: 'Plugin version',
+      checkUpdate: 'Check for updates',
+      checkingUpdate: 'Checking…',
+      updateLatest: 'Up to date',
+      updateAvailable: 'New version',
+      updateFailed: 'Update check failed',
+      updateHow: 'Update: git pull, reinstall, restart DSH',
       provider: 'Extraction model',
       cache: 'Cache location',
       systemDefault: 'system default',
@@ -849,6 +863,8 @@ window.__ModuleLoader__.load({
       const [bankConfigBusy, setBankConfigBusy] = useState(false);
       const [bankConfigMessage, setBankConfigMessage] = useState(null);
       const [extrasMissing, setExtrasMissing] = useState(false);
+      const [update, setUpdate] = useState(null);
+      const [checkingUpdate, setCheckingUpdate] = useState(false);
       const [cleanup, setCleanup] = useState(null);
       const [cleanupLoading, setCleanupLoading] = useState(false);
       const [staleDays, setStaleDays] = useState(90);
@@ -1138,6 +1154,21 @@ window.__ModuleLoader__.load({
         },
         [searchBudget, t],
       );
+
+      const checkUpdate = useCallback(async () => {
+        setCheckingUpdate(true);
+        setUpdate(null);
+        try {
+          const res = await fetch(`${API}/update`, { cache: 'no-store' });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          if (alive.current) setUpdate(body);
+        } catch (error) {
+          if (alive.current) setUpdate({ error: error.message ?? String(error) });
+        } finally {
+          if (alive.current) setCheckingUpdate(false);
+        }
+      }, []);
 
       const runProbe = useCallback(async () => {
         setProbing(true);
@@ -2079,6 +2110,37 @@ window.__ModuleLoader__.load({
                     h(
                       'div',
                       { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
+                      h(
+                        Row,
+                        { label: t('versionLabel') },
+                        h(
+                          'div',
+                          { style: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
+                          h('span', { style: mono }, `v${data?.pluginVersion ?? '—'}`),
+                          h(Button, { onClick: checkUpdate, busy: checkingUpdate }, checkingUpdate ? t('checkingUpdate') : t('checkUpdate')),
+                        ),
+                      ),
+                      update?.error
+                        ? h('div', { style: { fontSize: 11.5, color: C.err } }, `${t('updateFailed')}: ${update.error}`)
+                        : update
+                          ? h(
+                              'div',
+                              { style: { fontSize: 11.5, lineHeight: 1.6, color: update.updateAvailable ? C.warn : C.ok } },
+                              update.updateAvailable
+                                ? `${t('updateAvailable')} v${update.latest}（${t('versionLabel')} v${update.current}）`
+                                : `${t('updateLatest')}（v${update.current}）`,
+                              update.updateAvailable
+                                ? h(
+                                    'div',
+                                    { style: { ...mono, marginTop: 4, whiteSpace: 'pre-wrap', fontSize: 10.5, color: C.text2 } },
+                                    `${t('updateHow')}\n` +
+                                      `git pull\n` +
+                                      `dsh plugin --profile ${setup.profile ?? 'desktop'} remove dsh-hindsight-manager\n` +
+                                      `dsh plugin --profile ${setup.profile ?? 'desktop'} add file:<仓库目录>`,
+                                  )
+                                : null,
+                            )
+                          : null,
                       h(Row, { label: t('profileLabel') }, setup.profile ?? '—'),
                       h(
                         Row,

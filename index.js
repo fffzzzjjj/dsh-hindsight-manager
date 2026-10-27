@@ -51,6 +51,24 @@ const READY_TIMEOUT_MS = 6 * 60 * 1000;
 const RETRY_DELAYS_MS = [5000, 15000, 30000, 60000, 120000, 300000];
 
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
+const PLUGIN_VERSION = readJsonFile(join(PLUGIN_DIR, 'package.json'))?.version ?? '0.0.0';
+
+function versionParts(value) {
+  return String(value ?? '0')
+    .split('.')
+    .map((part) => Number.parseInt(part, 10) || 0);
+}
+
+/** Numeric compare; prerelease tags are simply ignored. */
+function compareVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < 3; index += 1) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
 
 // ── paths ─────────────────────────────────────────────────────────────────────
 
@@ -1072,6 +1090,7 @@ export function apply(ctx) {
     const bank = await resolveBank({ force: status.running && bankCache.name === null });
     const out = {
       ok: true,
+      pluginVersion: PLUGIN_VERSION,
       ...status,
       daemonPort,
       bank,
@@ -1115,6 +1134,9 @@ export function apply(ctx) {
 
   /** Last recall probe per bank: a fixed question, so timings stay comparable. */
   const healthProbes = new Map();
+
+  /** GitHub package.json lookup is cached for ten minutes. */
+  const updateCache = { at: 0, data: null };
 
   /** Cleanup scans are O(n²) over the bank; they are cached per filter window. */
   const cleanupCache = new Map();
@@ -1572,6 +1594,32 @@ export function apply(ctx) {
           json(res, 200, await entityDetail(id, limit));
         } catch (error) {
           json(res, error?.status === 404 ? 404 : 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/update': async (_req, res) => {
+        try {
+          if (updateCache.data && Date.now() - updateCache.at < 10 * 60 * 1000) {
+            json(res, 200, updateCache.data);
+            return;
+          }
+          const body = await fetchJson(
+            'https://raw.githubusercontent.com/fffzzzjjj/dsh-hindsight-manager/main/package.json',
+            { headers: { 'user-agent': `dsh-hindsight-manager/${PLUGIN_VERSION}` } },
+            10_000,
+          );
+          const latest = typeof body?.version === 'string' ? body.version : null;
+          const data = {
+            ok: true,
+            current: PLUGIN_VERSION,
+            latest,
+            updateAvailable: latest !== null && compareVersions(latest, PLUGIN_VERSION) > 0,
+          };
+          updateCache.at = Date.now();
+          updateCache.data = data;
+          json(res, 200, data);
+        } catch (error) {
+          json(res, 502, { ok: false, current: PLUGIN_VERSION, error: error?.message ?? String(error) });
         }
       },
 
