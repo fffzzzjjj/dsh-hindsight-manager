@@ -11,12 +11,16 @@
 // Side effects are contained: DSH_HOME points at a temporary directory (so the
 // plugin config is written there, not to the real profile), and autoStart is
 // switched off so the test never spawns a daemon.
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const home = mkdtempSync(join(tmpdir(), 'dsh-hm-host-'));
 process.env.DSH_HOME = home;
+// The key writer resolves `~/.hindsight`; point the user profile at the same
+// sandbox so a save-key test cannot reach the real environment file.
+process.env.USERPROFILE = home;
+process.env.HOME = home;
 mkdirSync(join(home, 'storages', 'dsh-hindsight-manager'), { recursive: true });
 writeFileSync(
   join(home, 'storages', 'dsh-hindsight-manager', 'config.json'),
@@ -159,6 +163,22 @@ const keyBad = await call('/hindsight-manager/api/setup', {
   body: JSON.stringify({ action: 'save-key', apiKey: 'short' }),
 });
 if (keyBad && keyBad.status !== 400) note(`setup short key status = ${keyBad.status}`);
+
+// A valid key must land in the profile env file — this is the path that threw
+// "mkdirSync is not defined" when the import went missing.
+const keyOk = await call('/hindsight-manager/api/setup', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'save-key', apiKey: 'sk-test-0123456789abcdef' }),
+});
+if (keyOk) {
+  if (keyOk.status !== 200 || keyOk.json?.ok !== true) note(`setup save-key status = ${keyOk.status} (${keyOk.body})`);
+  const envPath = join(home, '.hindsight', 'profiles', 'coding-agent.env');
+  if (!existsSync(envPath)) {
+    note('save-key did not create the profile env file');
+  } else if (!readFileSync(envPath, 'utf8').includes('HINDSIGHT_API_LLM_API_KEY=sk-test-0123456789abcdef')) {
+    note('save-key did not persist the key into the profile env file');
+  }
+}
 
 // ── overview: must answer whether or not a daemon is listening ───────────────
 const overview = await call('/hindsight-manager/api/overview');

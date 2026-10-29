@@ -16,7 +16,7 @@
  *   - /hindsight-manager/api/* for the panel
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { homedir } from 'node:os';
