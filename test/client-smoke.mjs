@@ -315,9 +315,9 @@ if (typeof handles.UsagePanel !== 'function') {
         totals: { calls: 9, input: 1000, output: 234, cached: 500, thoughts: 0, total: 1234, cost: 0.4231, pricedCalls: 9 },
         today: { calls: 2, input: 300, output: 0, cached: 0, thoughts: 0, total: 300, cost: 0.12 },
         buckets: [
-          { date: '2026-10-27', calls: 3, tokens: { total: 400 }, cost: 0.1 },
-          { date: '2026-10-28', calls: 4, tokens: { total: 430 }, cost: 0.2 },
-          { date: '2026-10-29', calls: 2, tokens: { total: 404 }, cost: 0.12 },
+          { date: '2026-10-27', label: '10-27', calls: 3, tokens: { total: 400 }, cost: 0.1 },
+          { date: '2026-10-28', label: '10-28', calls: 4, tokens: { total: 430 }, cost: 0.2 },
+          { date: '2026-10-29', label: '10-29', calls: 2, tokens: { total: 404 }, cost: 0.12 },
         ],
         byOperation: [{ key: 'retain', calls: 5, total: 900, cost: 0.3 }],
         byModel: [{ key: 'deepseek-flash', calls: 9, total: 1234, cost: 0.42 }],
@@ -356,6 +356,7 @@ if (typeof handles.UsagePanel !== 'function') {
     if (!texts.includes('300')) note('usage panel does not show today’s total');
     if (!texts.includes('retain')) note('usage panel does not list the operation split');
     if (!texts.includes('¥0.42')) note('usage panel does not show the estimated cost');
+    if (!texts.includes('10-29')) note('usage chart does not render the bucket label');
     // Column width, not flex: three days must not stretch across the page.
     let fixedColumns = 0;
     (function walk(node) {

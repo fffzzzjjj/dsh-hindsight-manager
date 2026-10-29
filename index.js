@@ -1475,8 +1475,10 @@ export function apply(ctx) {
     let calls = 0;
     for (const bucket of rawBuckets) {
       const tokens = bucket?.tokens ?? {};
+      const date = localDay(bucket?.time);
       const row = {
-        date: localDay(bucket?.time),
+        date,
+        label: date.slice(5),
         calls: Number(bucket?.total ?? 0),
         tokens: emptyTokens(),
       };
@@ -1574,6 +1576,69 @@ export function apply(ctx) {
       if (typeof bucket.cost === 'number') todayCost = bucket.cost;
     }
 
+    // The daemon's stats endpoint only aggregates by day, so a 24-hour view
+    // would otherwise draw one bar. The hour split is rebuilt from the call log
+    // instead, one slot per hour of the window, empty hours included.
+    let hourBuckets = null;
+    let hourTotals = null;
+    if (period === '1d' && items.length > 0) {
+      const byHour = new Map();
+      for (const item of items) {
+        const at = new Date(item?.started_at ?? '');
+        if (Number.isNaN(at.getTime())) continue;
+        const key = `${localDay(at.toISOString())}T${String(at.getHours()).padStart(2, '0')}`;
+        const entry =
+          byHour.get(key) ??
+          { date: key, label: `${String(at.getHours()).padStart(2, '0')}:00`, calls: 0, tokens: emptyTokens(), cost: 0, priced: 0 };
+        const input = Number(item?.input_tokens ?? 0);
+        const output = Number(item?.output_tokens ?? 0);
+        const cached = Number(item?.cached_tokens ?? 0);
+        entry.calls += 1;
+        entry.tokens.input += input;
+        entry.tokens.output += output;
+        entry.tokens.cached += cached;
+        entry.tokens.thoughts += Number(item?.thoughts_tokens ?? 0);
+        entry.tokens.total += Number(item?.total_tokens ?? input + output);
+        const cost = callCost(item?.model, input, cached, output, item?.started_at);
+        if (cost !== null) {
+          entry.cost += cost;
+          entry.priced += 1;
+        }
+        byHour.set(key, entry);
+      }
+
+      const start = new Date(Date.now() - windowMs);
+      start.setMinutes(0, 0, 0);
+      const end = new Date();
+      end.setMinutes(0, 0, 0);
+      hourBuckets = [];
+      for (let at = start.getTime(); at <= end.getTime(); at += 60 * 60 * 1000) {
+        const slot = new Date(at);
+        const key = `${localDay(slot.toISOString())}T${String(slot.getHours()).padStart(2, '0')}`;
+        const hit = byHour.get(key);
+        hourBuckets.push(
+          hit ?? {
+            date: key,
+            label: `${String(slot.getHours()).padStart(2, '0')}:00`,
+            calls: 0,
+            tokens: emptyTokens(),
+            cost: null,
+          },
+        );
+      }
+      for (const bucket of hourBuckets) {
+        if (typeof bucket.cost === 'number') {
+          bucket.cost = bucket.priced > 0 ? roundCost(bucket.cost) : null;
+        }
+        delete bucket.priced;
+      }
+
+      hourTotals = emptyTokens();
+      for (const bucket of hourBuckets) {
+        for (const key of ['input', 'output', 'cached', 'thoughts', 'total']) hourTotals[key] += bucket.tokens[key];
+      }
+    }
+
     const costsKnown = pricedCalls > 0;
     const costEstimated = costsKnown && items.length < callTotal;
 
@@ -1584,14 +1649,14 @@ export function apply(ctx) {
       generatedAt: new Date().toISOString(),
       windowStart: since,
       totals: {
-        calls,
-        ...totals,
+        calls: hourBuckets ? items.length : calls,
+        ...(hourTotals ?? totals),
         cost: costsKnown ? roundCost(costTotal) : null,
         costEstimated,
         pricedCalls,
       },
       today: { calls: todayCalls, ...today, cost: todayCost },
-      buckets,
+      buckets: hourBuckets ?? buckets,
       byOperation: split((item) => String(item?.operation ?? 'other')),
       byModel: split((item) => String(item?.model ?? 'unknown')),
       recent,

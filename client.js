@@ -277,6 +277,7 @@ window.__ModuleLoader__.load({
       usageInput: '输入',
       usageOutput: '输出',
       usageTrend: '按天',
+      usageTrendHour: '按小时',
       usageByOperation: '按操作',
       usageByModel: '按模型',
       usageRecent: '最近调用',
@@ -286,7 +287,7 @@ window.__ModuleLoader__.load({
       usageFailed: '读取用量失败',
       usageRefresh: '刷新',
       usageSampled: '基于最近 {n} 次调用',
-      usageTruncated: '（仅统计最近 500 次调用）',
+      usageTruncated: '（还有调用没计入）',
       usageNoTokens: '无 token 记录',
       usageFree: '本地向量与重排不消耗 token',
       usageCost: '花费（估）',
@@ -553,6 +554,7 @@ window.__ModuleLoader__.load({
       usageInput: 'Input',
       usageOutput: 'Output',
       usageTrend: 'By day',
+      usageTrendHour: 'By hour',
       usageByOperation: 'By operation',
       usageByModel: 'By model',
       usageRecent: 'Recent calls',
@@ -562,7 +564,7 @@ window.__ModuleLoader__.load({
       usageFailed: 'Could not read usage',
       usageRefresh: 'Refresh',
       usageSampled: 'Based on the latest {n} calls',
-      usageTruncated: ' (latest 500 calls only)',
+      usageTruncated: ' (not every call counted)',
       usageNoTokens: 'no token record',
       usageFree: 'Local embeddings and rerank cost no tokens',
       usageCost: 'Cost (est.)',
@@ -1033,7 +1035,11 @@ window.__ModuleLoader__.load({
                     : h(
                         'div',
                         null,
-                        h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6 } }, t('usageTrend')),
+                        h(
+                          'div',
+                          { style: { fontSize: 11, color: C.text3, marginBottom: 6 } },
+                          period === '1d' ? t('usageTrendHour') : t('usageTrend'),
+                        ),
                         // Fixed column width: a quiet week stays a few slim bars
                         // instead of one bar stretched across the page.
                         h(
@@ -1050,7 +1056,7 @@ window.__ModuleLoader__.load({
                                   'div',
                                   {
                                     key: bucket.date,
-                                    title: `${bucket.date} · ${fmt(bucket.tokens?.total ?? 0)} tokens${
+                                    title: `${String(bucket.date).replace('T', ' ')} · ${fmt(bucket.tokens?.total ?? 0)} tokens${
                                       typeof bucket.cost === 'number' ? ` · ${money(bucket.cost)}` : ''
                                     } · ${bucket.calls} ${t('usageCalls')}`,
                                     style: { flex: 'none', width: 20, height: '100%', display: 'flex', alignItems: 'flex-end' },
@@ -1084,7 +1090,7 @@ window.__ModuleLoader__.load({
                                       whiteSpace: 'nowrap',
                                     },
                                   },
-                                  index % labelEvery === 0 ? bucket.date.slice(5) : '',
+                                  index % labelEvery === 0 ? bucket.label ?? bucket.date.slice(5) : '',
                                 ),
                               ),
                             ),

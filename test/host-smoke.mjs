@@ -392,6 +392,18 @@ if (usageBadPeriod && ![200, 500].includes(usageBadPeriod.status)) {
   note(`usage unknown period status = ${usageBadPeriod.status}`);
 }
 
+// 24 h is rebuilt from the call log: one slot per hour, not one bar per day.
+const usageDay = await call('/hindsight-manager/api/usage?period=1d');
+if (usageDay && usageDay.status === 200) {
+  const buckets = Array.isArray(usageDay.json?.buckets) ? usageDay.json.buckets : [];
+  if (buckets.length > 25) note(`usage 1d returned ${buckets.length} buckets, expected at most 25 hourly slots`);
+  const hourly = buckets.filter((bucket) => /^\d{2}:\d{2}$/.test(String(bucket?.label ?? '')));
+  const busy = buckets.some((bucket) => Number(bucket?.calls ?? 0) > 0);
+  if (busy && hourly.length === 0) note('usage 1d has calls but no hourly buckets');
+} else if (usageDay && usageDay.status !== 500) {
+  note(`usage 1d status = ${usageDay.status}`);
+}
+
 const actionUnknown = await call('/hindsight-manager/api/memories/action', {
   method: 'POST',
   body: JSON.stringify({ action: 'nuke', ids: ['x'] }),
