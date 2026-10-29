@@ -299,6 +299,66 @@ if (typeof handles.CleanupPanel !== 'function') {
   }
 }
 
+// ── the usage panel draws its totals, a bar per day and the split ──────────
+if (typeof handles.UsagePanel !== 'function') {
+  note('UsagePanel is not exported for the test');
+} else {
+  try {
+    const tree = handles.UsagePanel({
+      t: (key) => key,
+      running: true,
+      loading: false,
+      period: '7d',
+      onChangePeriod() {},
+      onRefresh() {},
+      usage: {
+        totals: { calls: 9, input: 1000, output: 234, cached: 500, thoughts: 0, total: 1234 },
+        today: { calls: 2, input: 300, output: 0, cached: 0, thoughts: 0, total: 300 },
+        buckets: [
+          { date: '2026-10-27', calls: 3, tokens: { total: 400 } },
+          { date: '2026-10-28', calls: 4, tokens: { total: 430 } },
+          { date: '2026-10-29', calls: 2, tokens: { total: 404 } },
+        ],
+        byOperation: [{ key: 'retain', calls: 5, total: 900 }],
+        byModel: [{ key: 'deepseek-flash', calls: 9, total: 1234 }],
+        recent: [
+          {
+            at: '2026-10-29T10:00:00Z',
+            operation: 'retain',
+            model: 'deepseek-flash',
+            ms: 900,
+            status: 'success',
+            input: 800,
+            output: 100,
+            cached: 0,
+            total: 900,
+          },
+        ],
+        sampled: 9,
+        truncated: false,
+      },
+    });
+    let bars = 0;
+    let texts = [];
+    (function walk(node) {
+      if (typeof node === 'string') {
+        texts.push(node);
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (node.type === 'div' && node.props?.style?.borderRadius === '3px 3px 0 0') bars += 1;
+      (node.children ?? []).forEach(walk);
+    })(tree);
+    if (bars !== 3) note(`usage panel drew ${bars} day bars, expected 3`);
+    if (!texts.includes('1,234')) note('usage panel does not show the range total');
+    if (!texts.includes('300')) note('usage panel does not show today’s total');
+    if (!texts.includes('retain')) note('usage panel does not list the operation split');
+  } catch (error) {
+    note(`UsagePanel threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
+  }
+}
+
 // ── observation history panel renders its loading state ────────────────────
 if (typeof handles.ObservationHistory !== 'function') {
   note('ObservationHistory is not exported for the test');

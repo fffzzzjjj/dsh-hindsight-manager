@@ -264,6 +264,31 @@ window.__ModuleLoader__.load({
       profileLabel: 'Profile',
       installLog: '安装输出',
       unknown: '未知',
+      tabUsage: '用量',
+      usageTitle: 'Token 用量',
+      usageHint: '抽取与整理调用模型的消耗；本地向量与重排不计费',
+      usagePeriod1: '24 小时',
+      usagePeriod7: '7 天',
+      usagePeriod30: '30 天',
+      usageToday: '今日',
+      usageRange: '本周期',
+      usageCalls: '调用',
+      usageCached: '缓存命中',
+      usageInput: '输入',
+      usageOutput: '输出',
+      usageTrend: '按天',
+      usageByOperation: '按操作',
+      usageByModel: '按模型',
+      usageRecent: '最近调用',
+      usageEmpty: '这段时间还没有模型调用记录。',
+      usageDown: '守护进程未运行，没有可统计的用量。',
+      usageLoading: '读取中…',
+      usageFailed: '读取用量失败',
+      usageRefresh: '刷新',
+      usageSampled: '基于最近 {n} 次调用',
+      usageTruncated: '（仅统计最近 500 次调用）',
+      usageNoTokens: '无 token 记录',
+      usageFree: '本地向量与重排不消耗 token',
     };
 
     const en = {
@@ -510,6 +535,31 @@ window.__ModuleLoader__.load({
       profileLabel: 'Profile',
       installLog: 'Install output',
       unknown: 'unknown',
+      tabUsage: 'Usage',
+      usageTitle: 'Token usage',
+      usageHint: 'Spent by extraction and consolidation; local embeddings and rerank are free',
+      usagePeriod1: '24h',
+      usagePeriod7: '7 days',
+      usagePeriod30: '30 days',
+      usageToday: 'Today',
+      usageRange: 'This range',
+      usageCalls: 'Calls',
+      usageCached: 'Cache hits',
+      usageInput: 'Input',
+      usageOutput: 'Output',
+      usageTrend: 'By day',
+      usageByOperation: 'By operation',
+      usageByModel: 'By model',
+      usageRecent: 'Recent calls',
+      usageEmpty: 'No model calls in this range yet.',
+      usageDown: 'The daemon is not running, so there is nothing to count.',
+      usageLoading: 'Reading…',
+      usageFailed: 'Could not read usage',
+      usageRefresh: 'Refresh',
+      usageSampled: 'Based on the latest {n} calls',
+      usageTruncated: ' (latest 500 calls only)',
+      usageNoTokens: 'no token record',
+      usageFree: 'Local embeddings and rerank cost no tokens',
     };
 
     /** Locale tables, also used when the host injects no translator. */
@@ -838,6 +888,235 @@ window.__ModuleLoader__.load({
       return null;
     }
 
+    /** One pill in the usage period switch. */
+    function UsagePeriodPill({ active, children, onClick }) {
+      return h(
+        'button',
+        {
+          type: 'button',
+          onClick,
+          style: {
+            appearance: 'none',
+            cursor: 'pointer',
+            border: `1px solid ${active ? C.btnFill : C.border2}`,
+            background: active ? 'rgba(36,123,191,0.16)' : 'transparent',
+            color: active ? C.text : C.text3,
+            borderRadius: 999,
+            padding: '3px 10px',
+            fontSize: 11.5,
+            whiteSpace: 'nowrap',
+          },
+        },
+        children,
+      );
+    }
+
+    function UsagePanel({ t, running, usage, loading, period, onChangePeriod, onRefresh }) {
+      const totals = usage?.totals ?? null;
+      const buckets = Array.isArray(usage?.buckets) ? usage.buckets : [];
+      const peak = buckets.reduce((max, bucket) => Math.max(max, Number(bucket?.tokens?.total ?? 0)), 0) || 1;
+      const labelEvery = Math.max(1, Math.ceil(buckets.length / 8));
+      const split = (title, rows) =>
+        h(
+          'div',
+          { style: { minWidth: 0, flex: 1 } },
+          h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6 } }, title),
+          rows.length === 0
+            ? h('div', { style: { fontSize: 11.5, color: C.text3 } }, t('usageEmpty'))
+            : rows.map((row) =>
+                h(
+                  'div',
+                  {
+                    key: `${title}:${row.key}`,
+                    style: { display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 0', fontSize: 11.5 },
+                  },
+                  h(
+                    'span',
+                    { style: { color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 } },
+                    row.key,
+                  ),
+                  h('span', { style: { color: C.text3, fontVariantNumeric: 'tabular-nums' } }, `${fmt(row.calls)} ${t('usageCalls')}`),
+                  h(
+                    'span',
+                    { style: { color: C.text, fontVariantNumeric: 'tabular-nums', minWidth: 68, textAlign: 'right' } },
+                    fmt(row.total),
+                  ),
+                ),
+              ),
+        );
+
+      const figure = (label, value, sub) =>
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 86 } },
+          h('div', { style: { fontSize: 11, color: C.text3 } }, label),
+          h(
+            'div',
+            { style: { fontSize: 22, fontWeight: 600, color: C.text, fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 } },
+            value,
+          ),
+          sub ? h('div', { style: { fontSize: 10.5, color: C.text3 } }, sub) : null,
+        );
+
+      return h(
+        Card,
+        null,
+        h(
+          SectionTitle,
+          {
+            hint: t('usageHint'),
+            right: h(
+              'div',
+              { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
+              h(UsagePeriodPill, { active: period === '1d', onClick: () => onChangePeriod('1d') }, t('usagePeriod1')),
+              h(UsagePeriodPill, { active: period === '7d', onClick: () => onChangePeriod('7d') }, t('usagePeriod7')),
+              h(UsagePeriodPill, { active: period === '30d', onClick: () => onChangePeriod('30d') }, t('usagePeriod30')),
+              h(Button, { onClick: onRefresh, busy: loading }, t('usageRefresh')),
+            ),
+          },
+          t('usageTitle'),
+        ),
+
+        !running
+          ? h('div', { style: { fontSize: 12.5, color: C.text3 } }, t('usageDown'))
+          : !usage && loading
+            ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('usageLoading'))
+            : usage?.error
+              ? h(
+                  'div',
+                  { style: { fontSize: 12, color: C.err, wordBreak: 'break-word' } },
+                  `${t('usageFailed')}: ${usage.error}`,
+                )
+              : h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 } },
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: 22, flexWrap: 'wrap' } },
+                    figure(
+                      t('usageToday'),
+                      fmt(usage?.today?.total ?? 0),
+                      `${fmt(usage?.today?.calls ?? 0)} ${t('usageCalls')}`,
+                    ),
+                    figure(t('usageRange'), fmt(totals?.total ?? 0), `${fmt(totals?.calls ?? 0)} ${t('usageCalls')}`),
+                    figure(t('usageInput'), fmt(totals?.input ?? 0)),
+                    figure(t('usageOutput'), fmt(totals?.output ?? 0)),
+                    figure(t('usageCached'), fmt(totals?.cached ?? 0)),
+                  ),
+
+                  buckets.length === 0
+                    ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('usageEmpty'))
+                    : h(
+                        'div',
+                        null,
+                        h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6 } }, t('usageTrend')),
+                        h(
+                          'div',
+                          { style: { display: 'flex', alignItems: 'flex-end', gap: 4, height: 88 } },
+                          buckets.map((bucket) =>
+                            h(
+                              'div',
+                              {
+                                key: bucket.date,
+                                title: `${bucket.date} · ${fmt(bucket.tokens?.total ?? 0)} tokens · ${bucket.calls} ${t('usageCalls')}`,
+                                style: { flex: 1, minWidth: 5, display: 'flex', alignItems: 'flex-end', height: '100%' },
+                              },
+                              h('div', {
+                                style: {
+                                  width: '100%',
+                                  height: `${Math.max(2, Math.round((Number(bucket.tokens?.total ?? 0) / peak) * 84))}px`,
+                                  background: C.btnFill,
+                                  opacity: 0.75,
+                                  borderRadius: '3px 3px 0 0',
+                                },
+                              }),
+                            ),
+                          ),
+                        ),
+                        h(
+                          'div',
+                          { style: { display: 'flex', gap: 4, marginTop: 4 } },
+                          buckets.map((bucket, index) =>
+                            h(
+                              'div',
+                              {
+                                key: bucket.date,
+                                style: { flex: 1, minWidth: 5, textAlign: 'center', fontSize: 9.5, color: C.text3, overflow: 'hidden' },
+                              },
+                              index % labelEvery === 0 ? bucket.date.slice(5) : '',
+                            ),
+                          ),
+                        ),
+                      ),
+
+                  h(
+                    'div',
+                    { style: { display: 'flex', gap: 20, flexWrap: 'wrap', minWidth: 0 } },
+                    split(t('usageByOperation'), Array.isArray(usage?.byOperation) ? usage.byOperation : []),
+                    split(t('usageByModel'), Array.isArray(usage?.byModel) ? usage.byModel : []),
+                  ),
+
+                  h(
+                    'div',
+                    null,
+                    h(
+                      'div',
+                      { style: { display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 6 } },
+                      h('div', { style: { fontSize: 11, color: C.text3 } }, t('usageRecent')),
+                      h(
+                        'div',
+                        { style: { fontSize: 10.5, color: C.text3 } },
+                        `${t('usageSampled').replace('{n}', String(usage?.sampled ?? 0))}${
+                          usage?.truncated ? t('usageTruncated') : ''
+                        }`,
+                      ),
+                    ),
+                    (usage?.recent ?? []).length === 0
+                      ? h('div', { style: { fontSize: 11.5, color: C.text3 } }, t('usageEmpty'))
+                      : (usage?.recent ?? []).map((call, index) =>
+                          h(
+                            'div',
+                            {
+                              key: `${call.at ?? ''}:${index}`,
+                              style: {
+                                display: 'flex',
+                                alignItems: 'baseline',
+                                gap: 10,
+                                padding: '5px 0',
+                                borderTop: index === 0 ? 'none' : `1px solid ${C.border}`,
+                                fontSize: 11.5,
+                                minWidth: 0,
+                              },
+                            },
+                            h(
+                              'span',
+                              { style: { color: C.text3, fontVariantNumeric: 'tabular-nums', flex: 'none', width: 66 } },
+                              call.at ? new Date(call.at).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—',
+                            ),
+                            h(
+                              'span',
+                              { style: { color: call.status === 'success' ? C.text : C.err, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                              call.operation,
+                            ),
+                            h('span', { style: { ...mono, color: C.text3, flex: 'none' } }, call.model),
+                            h(
+                              'span',
+                              { style: { color: C.text3, fontVariantNumeric: 'tabular-nums', flex: 'none' } },
+                              `${call.ms} ms`,
+                            ),
+                            h(
+                              'span',
+                              { style: { color: C.text, fontVariantNumeric: 'tabular-nums', flex: 'none', minWidth: 104, textAlign: 'right' } },
+                              call.total > 0 ? `${fmt(call.input)} → ${fmt(call.output)}` : t('usageNoTokens'),
+                            ),
+                          ),
+                        ),
+                  ),
+                  h('div', { style: { fontSize: 10.5, color: C.text3 } }, t('usageFree')),
+                ),
+      );
+    }
+
     function ManagerPanel(props) {
       const t = typeof props?.t === 'function' ? props.t : fallbackT;
       const pickDirectoryProp = typeof props?.pickDirectory === 'function' ? props.pickDirectory : null;
@@ -868,6 +1147,9 @@ window.__ModuleLoader__.load({
       const [cleanup, setCleanup] = useState(null);
       const [cleanupLoading, setCleanupLoading] = useState(false);
       const [staleDays, setStaleDays] = useState(90);
+      const [usage, setUsage] = useState(null);
+      const [usageLoading, setUsageLoading] = useState(false);
+      const [usagePeriod, setUsagePeriod] = useState('7d');
       const [query, setQuery] = useState('');
       const [results, setResults] = useState(null);
       const [searching, setSearching] = useState(false);
@@ -996,6 +1278,32 @@ window.__ModuleLoader__.load({
           if (alive.current) setCleanupLoading(false);
         }
       }, [staleDays]);
+
+      const loadUsage = useCallback(async (period) => {
+        setUsageLoading(true);
+        try {
+          const res = await fetch(`${API}/usage?period=${encodeURIComponent(period)}`, { cache: 'no-store' });
+          const body = await res.json().catch(() => ({}));
+          if (!alive.current) return;
+          if (res.status === 404) {
+            setExtrasMissing(true);
+            return;
+          }
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          setUsage(body);
+        } catch (error) {
+          if (alive.current) setUsage({ error: error.message ?? String(error) });
+        } finally {
+          if (alive.current) setUsageLoading(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        if (view !== 'usage' || !data?.running) return undefined;
+        loadUsage(usagePeriod);
+        const timer = setInterval(() => loadUsage(usagePeriod), 15000);
+        return () => clearInterval(timer);
+      }, [view, usagePeriod, data?.running, data?.bank, loadUsage]);
 
       const loadDocuments = useCallback(async () => {
         try {
@@ -1476,6 +1784,7 @@ window.__ModuleLoader__.load({
             h(ViewTab, { active: view === 'overview', onClick: () => setView('overview') }, t('tabOverview')),
             h(ViewTab, { active: view === 'graph', onClick: () => setView('graph') }, t('tabGraph')),
             h(ViewTab, { active: view === 'cleanup', onClick: () => setView('cleanup') }, t('tabCleanup')),
+            h(ViewTab, { active: view === 'usage', onClick: () => setView('usage') }, t('tabUsage')),
           ),
 
           view === 'graph'
@@ -1490,6 +1799,16 @@ window.__ModuleLoader__.load({
                   onChangeStaleDays: setStaleDays,
                   onRefresh: loadCleanup,
                 })
+              : view === 'usage'
+                ? h(UsagePanel, {
+                    t,
+                    running,
+                    usage,
+                    loading: usageLoading,
+                    period: usagePeriod,
+                    onChangePeriod: setUsagePeriod,
+                    onRefresh: () => loadUsage(usagePeriod),
+                  })
             : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 } },
               // quick start / setup
               h(
@@ -4402,7 +4721,7 @@ window.__ModuleLoader__.load({
       apply,
       // Render handles for the smoke test; the module loader only reads
       // name/inject/apply, so these are inert in the real host.
-      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout, CleanupPanel, ObservationHistory },
+      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout, CleanupPanel, ObservationHistory, UsagePanel },
     };
   },
 });

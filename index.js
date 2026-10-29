@@ -1368,6 +1368,137 @@ export function apply(ctx) {
     return data;
   }
 
+  /** Windows the usage view offers, in milliseconds. */
+  const USAGE_WINDOWS = { '1d': 24 * 60 * 60 * 1000, '7d': 7 * 24 * 60 * 60 * 1000, '30d': 30 * 24 * 60 * 60 * 1000 };
+
+  /** The token counters Hindsight records, all zeroed. */
+  function emptyTokens() {
+    return { input: 0, output: 0, cached: 0, thoughts: 0, total: 0 };
+  }
+
+  /** `YYYY-MM-DD` in the machine's local zone, for bucketing day totals. */
+  function localDay(iso) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  /**
+   * Token usage for one bank.
+   *
+   * The daemon already records every model call and buckets the tokens by day,
+   * so this only reshapes its answer: `/llm-requests/stats` gives the trend and
+   * totals, and a page of `/llm-requests` gives the per-model and per-operation
+   * split. Calls are filtered to `call_type=llm` on purpose — embedding and
+   * rerank run on the local models and bill nobody, so counting them would
+   * inflate the call count without adding a token.
+   */
+  async function usageScan(bank, period) {
+    const windowMs = USAGE_WINDOWS[period] ?? USAGE_WINDOWS['7d'];
+    const since = new Date(Date.now() - windowMs).toISOString();
+    const stats = await fetchJson(
+      bankUrl(bank, `/llm-requests/stats?period=${encodeURIComponent(period)}&call_type=llm`),
+      undefined,
+      GRAPH_TIMEOUT_MS,
+    );
+
+    // A page of calls is enough to name the big spenders; capped at the API's
+    // own limit, and the count says so when it was hit.
+    let list = null;
+    try {
+      list = await fetchJson(
+        bankUrl(bank, `/llm-requests?limit=500&call_type=llm&start_date=${encodeURIComponent(since)}`),
+        undefined,
+        GRAPH_TIMEOUT_MS,
+      );
+    } catch {
+      // The trend above is already useful; the split is a bonus.
+    }
+
+    const rawBuckets = Array.isArray(stats?.buckets) ? stats.buckets : [];
+    const buckets = [];
+    const totals = emptyTokens();
+    let calls = 0;
+    for (const bucket of rawBuckets) {
+      const tokens = bucket?.tokens ?? {};
+      const row = {
+        date: localDay(bucket?.time),
+        calls: Number(bucket?.total ?? 0),
+        tokens: emptyTokens(),
+      };
+      for (const key of ['input', 'output', 'cached', 'thoughts', 'total']) {
+        row.tokens[key] = Number(tokens[key] ?? 0);
+        totals[key] += row.tokens[key];
+      }
+      calls += row.calls;
+      if (row.date !== '') buckets.push(row);
+    }
+
+    const items = Array.isArray(list?.items) ? list.items : [];
+    const split = (keyOf) => {
+      const map = new Map();
+      for (const item of items) {
+        const key = keyOf(item);
+        const entry = map.get(key) ?? { key, calls: 0, ...emptyTokens() };
+        const input = Number(item?.input_tokens ?? 0);
+        const output = Number(item?.output_tokens ?? 0);
+        entry.calls += 1;
+        entry.input += input;
+        entry.output += output;
+        entry.cached += Number(item?.cached_tokens ?? 0);
+        entry.thoughts += Number(item?.thoughts_tokens ?? 0);
+        entry.total += Number(item?.total_tokens ?? input + output);
+        map.set(key, entry);
+      }
+      return [...map.values()].sort((a, b) => b.total - a.total).slice(0, 8);
+    };
+
+    const recent = items
+      .slice()
+      .sort((a, b) => String(b?.started_at ?? '').localeCompare(String(a?.started_at ?? '')))
+      .slice(0, 12)
+      .map((item) => {
+        const input = Number(item?.input_tokens ?? 0);
+        const output = Number(item?.output_tokens ?? 0);
+        return {
+          at: item?.started_at ?? null,
+          operation: String(item?.operation ?? 'other'),
+          model: String(item?.model ?? 'unknown'),
+          ms: Number(item?.duration_ms ?? 0),
+          status: String(item?.status ?? 'unknown'),
+          input,
+          output,
+          cached: Number(item?.cached_tokens ?? 0),
+          total: Number(item?.total_tokens ?? input + output),
+        };
+      });
+
+    const todayKey = localDay(new Date().toISOString());
+    const today = emptyTokens();
+    let todayCalls = 0;
+    for (const bucket of buckets) {
+      if (bucket.date !== todayKey) continue;
+      todayCalls += bucket.calls;
+      for (const key of ['input', 'output', 'cached', 'thoughts', 'total']) today[key] += bucket.tokens[key];
+    }
+
+    return {
+      ok: true,
+      bank,
+      period,
+      generatedAt: new Date().toISOString(),
+      windowStart: since,
+      totals: { calls, ...totals },
+      today: { calls: todayCalls, ...today },
+      buckets,
+      byOperation: split((item) => String(item?.operation ?? 'other')),
+      byModel: split((item) => String(item?.model ?? 'unknown')),
+      recent,
+      sampled: items.length,
+      truncated: items.length >= 500,
+    };
+  }
+
   /** One entity plus the memories that mention it — the drill-down from a node. */
   async function entityDetail(id, limit) {
     const bank = await resolveBank();
@@ -1630,6 +1761,17 @@ export function apply(ctx) {
           const scanLimit = Math.min(2000, Math.max(100, Number(url.searchParams.get('scan')) || 800));
           const bank = await resolveBank();
           json(res, 200, await cleanupScan(bank, staleDays, scanLimit));
+        } catch (error) {
+          json(res, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/usage': async (req, res) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+          const period = url.searchParams.get('period');
+          const bank = await resolveBank();
+          json(res, 200, await usageScan(bank, ['1d', '7d', '30d'].includes(period) ? period : '7d'));
         } catch (error) {
           json(res, 500, { ok: false, error: error?.message ?? String(error) });
         }

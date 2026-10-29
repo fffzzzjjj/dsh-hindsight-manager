@@ -125,6 +125,7 @@ const expected = [
   '/hindsight-manager/api/banks',
   '/hindsight-manager/api/health',
   '/hindsight-manager/api/cleanup',
+  '/hindsight-manager/api/usage',
   '/hindsight-manager/api/update',
   '/hindsight-manager/api/memories/action',
   '/hindsight-manager/api/health/probe',
@@ -340,6 +341,31 @@ if (cleanupCall) {
   } else {
     note(`cleanup status = ${cleanupCall.status}`);
   }
+}
+
+// ── usage: a token report, or a reported failure — never a thrown handler ──
+const usageCall = await call('/hindsight-manager/api/usage?period=7d');
+if (usageCall) {
+  const body = usageCall.json ?? {};
+  if (usageCall.status === 200) {
+    if (body.ok !== true) note('usage payload is not ok:true');
+    if (!Array.isArray(body.buckets)) note('usage payload has no buckets array');
+    if (!body.totals || typeof body.totals.total !== 'number') note('usage payload has no totals.total');
+    if (!body.today || typeof body.today.total !== 'number') note('usage payload has no today.total');
+    if (!Array.isArray(body.byOperation)) note('usage payload has no byOperation array');
+    if (!Array.isArray(body.byModel)) note('usage payload has no byModel array');
+    if (!Array.isArray(body.recent)) note('usage payload has no recent array');
+    if (typeof body.period !== 'string') note('usage payload has no period');
+  } else if (usageCall.status === 500) {
+    if (body.ok !== false) note('usage failure body is not ok:false');
+  } else {
+    note(`usage status = ${usageCall.status}`);
+  }
+}
+
+const usageBadPeriod = await call('/hindsight-manager/api/usage?period=1y');
+if (usageBadPeriod && ![200, 500].includes(usageBadPeriod.status)) {
+  note(`usage unknown period status = ${usageBadPeriod.status}`);
 }
 
 const actionUnknown = await call('/hindsight-manager/api/memories/action', {
