@@ -59,6 +59,7 @@ After that the checklist collapses into "Ready", and conversations are written t
 - **Graph**: focused on the busiest entity (two hops); click to refocus, blank area or × to return to the full graph; custom "min mentions"; growth replay; the drawer lists that entity's memories.
 - **Cleanup**: four lists and bulk invalidation; restore from "Forgotten".
 - **Usage**: token spend of the extraction/consolidation calls — today and for 24 h / 7 / 30 days, a bar chart with fixed-width bars (by hour for the 24-hour range, by day otherwise), split by operation and by model, plus the latest calls. Read from the daemon's `llm-requests` log; local embeddings and rerank cost nothing and are excluded. Cost is estimated from DeepSeek's published prices with the peak/idle difference applied per call — a calculation, not a bill.
+- **Retrieval quality**: which embedding/rerank models are actually in use, the vector size, how much of the bank is Chinese, and a timed recall that reports latency, result count, score spread and the top hits. Warns when an English-only encoder is indexing a Chinese bank, or when rerank scores are too bunched to order anything.
 - **Settings**: cache dir, start with DSH, footer status, sidebar entry (also on Plugins → Installed → Local Memory).
 
 ## Config

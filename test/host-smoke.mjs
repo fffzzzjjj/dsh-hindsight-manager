@@ -130,6 +130,7 @@ const expected = [
   '/hindsight-manager/api/health',
   '/hindsight-manager/api/cleanup',
   '/hindsight-manager/api/usage',
+  '/hindsight-manager/api/recall-quality',
   '/hindsight-manager/api/update',
   '/hindsight-manager/api/memories/action',
   '/hindsight-manager/api/health/probe',
@@ -402,6 +403,34 @@ if (usageDay && usageDay.status === 200) {
   if (busy && hourly.length === 0) note('usage 1d has calls but no hourly buckets');
 } else if (usageDay && usageDay.status !== 500) {
   note(`usage 1d status = ${usageDay.status}`);
+}
+
+// ── retrieval quality: the models in use, or a reported failure ────────────
+const qualityCall = await call('/hindsight-manager/api/recall-quality');
+if (qualityCall) {
+  if (qualityCall.status === 200) {
+    const body = qualityCall.json ?? {};
+    if (body.ok !== true) note('recall-quality payload is not ok:true');
+    if (!body.embedding || !('model' in body.embedding)) note('recall-quality has no embedding model');
+    if (!body.rerank || typeof body.rerank.enabled !== 'boolean') note('recall-quality has no rerank state');
+    if (!body.language || typeof body.language.chineseRatio !== 'number') note('recall-quality has no language sample');
+    if (!Array.isArray(body.warnings)) note('recall-quality has no warnings array');
+  } else if (qualityCall.status === 500) {
+    if (qualityCall.json?.ok !== false) note('recall-quality failure body is not ok:false');
+  } else {
+    note(`recall-quality status = ${qualityCall.status}`);
+  }
+}
+
+const qualityProbe = await call('/hindsight-manager/api/recall-quality', { method: 'POST', body: '{}' });
+if (qualityProbe) {
+  if (qualityProbe.status === 200) {
+    const body = qualityProbe.json ?? {};
+    if (typeof body.ms !== 'number') note('recall-quality probe has no duration');
+    if (!Array.isArray(body.results)) note('recall-quality probe has no results array');
+  } else if (qualityProbe.status !== 500) {
+    note(`recall-quality probe status = ${qualityProbe.status}`);
+  }
 }
 
 const actionUnknown = await call('/hindsight-manager/api/memories/action', {

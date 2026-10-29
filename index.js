@@ -17,7 +17,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -1667,6 +1667,142 @@ export function apply(ctx) {
     };
   }
 
+  /** Models the daemon actually used for its last embedding and rerank call. */
+  async function activeModels(bank) {
+    const pick = async (callType) => {
+      try {
+        const page = await fetchJson(bankUrl(bank, `/llm-requests?limit=1&call_type=${callType}`), undefined, GRAPH_TIMEOUT_MS);
+        return page?.items?.[0]?.model ?? null;
+      } catch {
+        return null;
+      }
+    };
+    const [embedding, rerank] = await Promise.all([pick('embedding'), pick('rerank')]);
+    return { embedding, rerank };
+  }
+
+  /** Vector size, read from the downloaded model's own config.json. */
+  async function modelDimension(model) {
+    if (typeof model !== 'string' || model === '') return null;
+    const root = join(hindsightHome(), 'hf-models', 'hub', `models--${model.replace(/\//g, '--')}`, 'snapshots');
+    try {
+      for (const snapshot of await readdir(root)) {
+        const parsed = JSON.parse(await readFile(join(root, snapshot, 'config.json'), 'utf8'));
+        const size = Number(parsed?.hidden_size ?? parsed?.dim ?? 0);
+        if (Number.isInteger(size) && size > 0) return size;
+      }
+    } catch {
+      // Not downloaded locally, or no config: "unknown" is a fine answer.
+    }
+    return null;
+  }
+
+  /**
+   * Share of sampled memories that contain Chinese at all.
+   *
+   * Per-item rather than per-character: a Chinese memory is usually Chinese
+   * prose carrying code, paths and identifiers, so a character ratio would call
+   * a Chinese bank "38% Chinese" and understate the mismatch.
+   */
+  async function bankLanguage(bank) {
+    const page = await fetchJson(bankUrl(bank, '/memories/list?limit=40&state=valid'), undefined, GRAPH_TIMEOUT_MS);
+    const items = Array.isArray(page?.items) ? page.items : [];
+    let withCjk = 0;
+    for (const item of items) {
+      if (/[\u3400-\u9fff]/.test(String(item?.text ?? ''))) withCjk += 1;
+    }
+    return { sampled: items.length, chineseRatio: items.length === 0 ? 0 : withCjk / items.length };
+  }
+
+  /** True when a model id names an English-only encoder. */
+  function looksEnglish(model) {
+    if (typeof model !== 'string' || model === '') return false;
+    return /(^|[-/])(bge-(small|base|large)-en|all-MiniLM|ms-marco|e5-(small|base)-v2|gte-small)/i.test(model) || /-en-v\d/i.test(model);
+  }
+
+  /**
+   * What retrieval is actually running on: the models in use, the vector size,
+   * how Chinese the bank is, and the live recall settings. Static and cheap —
+   * the timed recall is a separate, explicit action.
+   */
+  async function retrievalQuality(bank) {
+    const [models, language, config] = await Promise.all([
+      activeModels(bank),
+      bankLanguage(bank),
+      fetchJson(bankUrl(bank, '/config'), undefined, GRAPH_TIMEOUT_MS).catch(() => null),
+    ]);
+    const dimension = await modelDimension(models.embedding);
+    const settings = {
+      rerank: config?.enable_reranking !== false,
+      budget: String(config?.recall_budget_function ?? 'fixed'),
+      maxTokens: Number(config?.recall_max_tokens ?? 2048),
+    };
+    const warnings = [];
+    if (language.sampled > 0 && language.chineseRatio >= 0.2 && looksEnglish(models.embedding)) {
+      warnings.push({
+        code: 'english-embedding',
+        params: { model: models.embedding ?? '', ratio: Math.round(language.chineseRatio * 100) },
+      });
+    }
+    if (settings.rerank && looksEnglish(models.rerank)) {
+      warnings.push({ code: 'english-reranker', params: { model: models.rerank ?? '' } });
+    }
+    if (dimension === null) warnings.push({ code: 'dimension-unknown', params: { model: models.embedding ?? '' } });
+    return {
+      ok: true,
+      bank,
+      embedding: { model: models.embedding, dimension },
+      rerank: { model: models.rerank, enabled: settings.rerank },
+      language,
+      settings,
+      warnings,
+    };
+  }
+
+  /**
+   * One real recall, timed, using the same options the conversation integration
+   * sends — so the numbers describe what a session's first prompt actually gets.
+   */
+  async function retrievalProbe(bank, query) {
+    const started = Date.now();
+    const result = await fetchJson(
+      bankUrl(bank, '/memories/recall'),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ query, types: ['observation'], budget: 'low', max_tokens: 2000 }),
+      },
+      120_000,
+    );
+    const ms = Date.now() - started;
+    const results = Array.isArray(result?.results) ? result.results : [];
+    const chars = results.reduce((sum, item) => sum + String(item?.text ?? '').length, 0);
+    const scores = results
+      .map((item) => Number(item?.scores?.final ?? item?.scores?.reranker ?? NaN))
+      .filter((value) => Number.isFinite(value));
+    const high = scores.length ? Math.max(...scores) : null;
+    const low = scores.length ? Math.min(...scores) : null;
+    return {
+      ok: true,
+      bank,
+      query,
+      ms,
+      count: results.length,
+      chars,
+      approxTokens: Math.round(chars / 2),
+      scoreTop: high,
+      scoreLow: low,
+      scoreSpread: high !== null && low !== null ? Number((high - low).toFixed(4)) : null,
+      semanticHits: results.filter((item) => item?.scores?.semantic != null).length,
+      keywordHits: results.filter((item) => item?.scores?.keyword != null).length,
+      results: results.slice(0, 5).map((item) => ({
+        text: String(item?.text ?? '').slice(0, 400),
+        type: String(item?.type ?? 'fact'),
+        final: item?.scores?.final ?? null,
+      })),
+    };
+  }
+
   /** One entity plus the memories that mention it — the drill-down from a node. */
   async function entityDetail(id, limit) {
     const bank = await resolveBank();
@@ -1940,6 +2076,23 @@ export function apply(ctx) {
           const period = url.searchParams.get('period');
           const bank = await resolveBank();
           json(res, 200, await usageScan(bank, ['1d', '7d', '30d'].includes(period) ? period : '7d'));
+        } catch (error) {
+          json(res, 500, { ok: false, error: error?.message ?? String(error) });
+        }
+      },
+
+      '/hindsight-manager/api/recall-quality': async (req, res) => {
+        try {
+          // Read the body before any network call: the request has already begun
+          // arriving, and awaiting a fetch first would drop it.
+          let query = '这个项目最近在做什么，有哪些决定';
+          if (req.method === 'POST') {
+            const raw = await readBody(req);
+            const body = raw.length === 0 ? {} : JSON.parse(raw);
+            if (typeof body.query === 'string' && body.query.trim() !== '') query = body.query.trim();
+          }
+          const bank = await resolveBank();
+          json(res, 200, req.method === 'POST' ? await retrievalProbe(bank, query) : await retrievalQuality(bank));
         } catch (error) {
           json(res, 500, { ok: false, error: error?.message ?? String(error) });
         }

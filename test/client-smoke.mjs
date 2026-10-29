@@ -371,6 +371,57 @@ if (typeof handles.UsagePanel !== 'function') {
   }
 }
 
+// ── the retrieval-quality card names the models and flags a language mismatch ─
+if (typeof handles.RecallQualityCard !== 'function') {
+  note('RecallQualityCard is not exported for the test');
+} else {
+  try {
+    const tree = handles.RecallQualityCard({
+      t: (key) => key,
+      running: true,
+      loading: false,
+      testing: false,
+      quality: {
+        embedding: { model: 'BAAI/bge-small-en-v1.5', dimension: 384 },
+        rerank: { model: 'cross-encoder/ms-marco-MiniLM-L-6-v2', enabled: true },
+        language: { sampled: 40, chineseRatio: 0.9 },
+        settings: { budget: 'fixed', maxTokens: 2048 },
+        warnings: [{ code: 'english-embedding', params: { model: 'BAAI/bge-small-en-v1.5', ratio: 90 } }],
+      },
+      test: {
+        ms: 4400,
+        count: 19,
+        approxTokens: 1969,
+        scoreSpread: 0.003,
+        semanticHits: 0,
+        keywordHits: 0,
+        results: [{ text: 'a fact', final: 1.12 }],
+      },
+      onTest() {},
+    });
+    const texts = [];
+    (function walk(node) {
+      if (typeof node === 'string') {
+        texts.push(node);
+        return;
+      }
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      (node.children ?? []).forEach(walk);
+    })(tree);
+    if (!texts.some((text) => String(text).includes('BAAI/bge-small-en-v1.5'))) {
+      note('quality card does not name the embedding model');
+    }
+    if (!texts.some((text) => String(text).includes('qualityWarnEnglishEmbedding'))) {
+      note('quality card does not flag the English embedding model');
+    }
+    if (!texts.includes('qualityWarnSaturated')) note('quality card does not flag saturated scores');
+    if (!texts.includes('qualityWarnSparse')) note('quality card does not flag sparse arms');
+  } catch (error) {
+    note(`RecallQualityCard threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
+  }
+}
+
 // ── observation history panel renders its loading state ────────────────────
 if (typeof handles.ObservationHistory !== 'function') {
   note('ObservationHistory is not exported for the test');

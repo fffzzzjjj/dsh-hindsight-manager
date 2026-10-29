@@ -295,6 +295,29 @@ window.__ModuleLoader__.load({
       usageCostEstimated: '部分调用缺单价，为下限',
       usagePriceNote:
         '价目：输入 ¥1 / ¥2（空闲/高峰）每百万，缓存命中 ¥0.02 / ¥0.04，输出 ¥4 / ¥8；高峰为北京时间工作日 9:00–12:00、14:00–18:00。',
+      qualityTitle: '检索质量',
+      qualityHint: '当前检索实际用的模型与配置',
+      qualityEmbedding: '嵌入模型',
+      qualityRerank: '重排模型',
+      qualityLanguage: '记忆语言',
+      qualityChinese: '中文 {ratio}% · 样本 {n} 条',
+      qualitySettings: '召回设置',
+      qualityOn: '开',
+      qualityOff: '关',
+      qualityTest: '测一次召回',
+      qualityTesting: '检索中…',
+      qualityTestHint: '用会话同样的参数（observation / low / 2000 tokens）跑一次真实召回，不改动记忆。',
+      qualityMs: '耗时',
+      qualityResults: '条数',
+      qualitySpread: '分数区间',
+      qualityEmpty: '还没有测过。点「测一次召回」看真实结果。',
+      qualityNoData: '守护进程未运行，读不到检索配置。',
+      qualityWarnEnglishEmbedding:
+        '记忆库 {ratio}% 是中文，而嵌入模型 {model} 是英文模型：语义这一路基本失效，排序主要靠图谱与时间。',
+      qualityWarnEnglishRerank: '重排模型 {model} 同样只训练过英文语料，中文重排区分度很低。',
+      qualityWarnDimension: '本地没找到 {model} 的 config.json，读不出向量维度。',
+      qualityWarnSaturated: '重排分数高度集中（区间 {spread}），排序几乎没有区分度。',
+      qualityWarnSparse: '这次命中没有一条来自语义或关键词臂，结果全是图谱/时间臂给的。',
     };
 
     const en = {
@@ -572,6 +595,29 @@ window.__ModuleLoader__.load({
       usageCostEstimated: 'lower bound — some calls had no price',
       usagePriceNote:
         'Prices: input ¥1 / ¥2 per million (idle/peak), cache hit ¥0.02 / ¥0.04, output ¥4 / ¥8; peak is Beijing time, weekdays 09:00–12:00 and 14:00–18:00.',
+      qualityTitle: 'Retrieval quality',
+      qualityHint: 'The models and settings retrieval actually runs on',
+      qualityEmbedding: 'Embedding model',
+      qualityRerank: 'Rerank model',
+      qualityLanguage: 'Memory language',
+      qualityChinese: 'Chinese {ratio}% · {n} sampled',
+      qualitySettings: 'Recall settings',
+      qualityOn: 'on',
+      qualityOff: 'off',
+      qualityTest: 'Run a recall',
+      qualityTesting: 'Retrieving…',
+      qualityTestHint: 'Runs one real recall with the conversation’s own options (observation / low / 2000 tokens); nothing is written.',
+      qualityMs: 'Latency',
+      qualityResults: 'Results',
+      qualitySpread: 'Score spread',
+      qualityEmpty: 'Not measured yet. Run a recall to see real output.',
+      qualityNoData: 'The daemon is not running, so retrieval settings cannot be read.',
+      qualityWarnEnglishEmbedding:
+        '{ratio}% of this bank is Chinese while {model} is an English-only encoder — the semantic arm is effectively dead and ranking falls back to graph and recency.',
+      qualityWarnEnglishRerank: 'The reranker {model} was trained on English text too; its Chinese ordering is weak.',
+      qualityWarnDimension: 'No config.json found locally for {model}, so the vector size is unknown.',
+      qualityWarnSaturated: 'Rerank scores are tightly bunched (spread {spread}), so the ordering carries almost no signal.',
+      qualityWarnSparse: 'No hit came from the semantic or keyword arm — every result came from graph/temporal ranking.',
     };
 
     /** Locale tables, also used when the host injects no translator. */
@@ -1178,6 +1224,147 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * What retrieval is running on, and proof of how it behaves: the models in
+     * use, how Chinese the bank is, and one timed recall on demand. The point is
+     * to replace "召回感觉很低" with numbers.
+     */
+    function RecallQualityCard({ t, running, quality, test, loading, testing, onTest }) {
+      const warningText = (entry) => {
+        const params = entry?.params ?? {};
+        if (entry?.code === 'english-embedding') {
+          return fill(t('qualityWarnEnglishEmbedding'), { model: params.model ?? '', ratio: String(params.ratio ?? '') });
+        }
+        if (entry?.code === 'english-reranker') {
+          return fill(t('qualityWarnEnglishRerank'), { model: params.model ?? '' });
+        }
+        if (entry?.code === 'dimension-unknown') {
+          return fill(t('qualityWarnDimension'), { model: params.model ?? '' });
+        }
+        return '';
+      };
+      const warnings = (quality?.warnings ?? []).map(warningText).filter(Boolean);
+      const saturated = test && typeof test.scoreSpread === 'number' && test.scoreSpread < 0.02;
+      const sparse = test && test.count > 0 && test.semanticHits === 0 && test.keywordHits === 0;
+
+      return h(
+        Card,
+        null,
+        h(
+          SectionTitle,
+          {
+            hint: t('qualityHint'),
+            right: h(Button, { onClick: onTest, busy: testing, disabled: !running }, testing ? t('qualityTesting') : t('qualityTest')),
+          },
+          t('qualityTitle'),
+        ),
+        !running
+          ? h('div', { style: { fontSize: 12.5, color: C.text3 } }, t('qualityNoData'))
+          : !quality && loading
+            ? h('div', { style: { fontSize: 12, color: C.text3 } }, t('stateUnknown'))
+            : quality?.error
+              ? h('div', { style: { fontSize: 12, color: C.err, wordBreak: 'break-word' } }, String(quality.error))
+              : h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 } },
+                h(
+                  'div',
+                  { style: { display: 'flex', flexDirection: 'column', gap: 7 } },
+                  h(
+                    Row,
+                    { label: t('qualityEmbedding') },
+                    `${quality?.embedding?.model ?? '—'}${quality?.embedding?.dimension ? ` · ${quality.embedding.dimension}d` : ''}`,
+                  ),
+                  h(
+                    Row,
+                    { label: t('qualityRerank') },
+                    `${quality?.rerank?.model ?? '—'} · ${quality?.rerank?.enabled ? t('qualityOn') : t('qualityOff')}`,
+                  ),
+                  h(
+                    Row,
+                    { label: t('qualityLanguage') },
+                    quality?.language?.sampled
+                      ? fill(t('qualityChinese'), {
+                          ratio: String(Math.round((quality.language.chineseRatio ?? 0) * 100)),
+                          n: String(quality.language.sampled),
+                        })
+                      : '—',
+                  ),
+                  h(
+                    Row,
+                    { label: t('qualitySettings') },
+                    quality?.settings
+                      ? `${quality.settings.budget} · max_tokens ${fmt(quality.settings.maxTokens ?? 0)}`
+                      : '—',
+                  ),
+                ),
+
+                warnings.length
+                  ? h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                      warnings.map((text, index) =>
+                        h(
+                          'div',
+                          { key: `warn-${index}`, style: { fontSize: 11.5, color: C.warn, lineHeight: 1.45 } },
+                          `⚠ ${text}`,
+                        ),
+                      ),
+                    )
+                  : null,
+
+                test
+                  ? h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', gap: 8, borderTop: `1px solid ${C.border}`, paddingTop: 10 } },
+                      test.error
+                        ? h('div', { style: { fontSize: 12, color: C.err, wordBreak: 'break-word' } }, String(test.error))
+                        : null,
+                      h(
+                        'div',
+                        { style: { display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12, alignItems: 'baseline' } },
+                        h('span', { style: { color: C.text3 } }, `${t('qualityMs')} ${fmt(test.ms)} ms`),
+                        h('span', { style: { color: C.text3 } }, `${t('qualityResults')} ${fmt(test.count)}`),
+                        h('span', { style: { color: C.text3 } }, `≈ ${fmt(test.approxTokens)} tokens`),
+                        h(
+                          'span',
+                          { style: { color: saturated ? C.warn : C.text3 } },
+                          `${t('qualitySpread')} ${test.scoreSpread === null ? '—' : test.scoreSpread}`,
+                        ),
+                      ),
+                      saturated
+                        ? h('div', { style: { fontSize: 11.5, color: C.warn } }, fill(t('qualityWarnSaturated'), { spread: String(test.scoreSpread) }))
+                        : null,
+                      sparse
+                        ? h('div', { style: { fontSize: 11.5, color: C.warn } }, t('qualityWarnSparse'))
+                        : null,
+                      h(
+                        'div',
+                        { style: { display: 'flex', flexDirection: 'column', gap: 5 } },
+                        (test.results ?? []).map((item, index) =>
+                          h(
+                            'div',
+                            { key: `hit-${index}`, style: { display: 'flex', gap: 8, fontSize: 11.5, alignItems: 'baseline', minWidth: 0 } },
+                            h(
+                              'span',
+                              { style: { color: C.text3, flex: 'none', fontVariantNumeric: 'tabular-nums', width: 54 } },
+                              item.final === null || item.final === undefined ? '—' : Number(item.final).toFixed(3),
+                            ),
+                            h(
+                              'span',
+                              { style: { color: C.text2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                              String(item.text ?? '').replace(/\s+/g, ' ').slice(0, 120),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  : h('div', { style: { fontSize: 11.5, color: C.text3 } }, t('qualityEmpty')),
+                h('div', { style: { fontSize: 10.5, color: C.text3 } }, t('qualityTestHint')),
+              ),
+      );
+    }
+
     function ManagerPanel(props) {
       const t = typeof props?.t === 'function' ? props.t : fallbackT;
       const pickDirectoryProp = typeof props?.pickDirectory === 'function' ? props.pickDirectory : null;
@@ -1211,6 +1398,10 @@ window.__ModuleLoader__.load({
       const [usage, setUsage] = useState(null);
       const [usageLoading, setUsageLoading] = useState(false);
       const [usagePeriod, setUsagePeriod] = useState('7d');
+      const [quality, setQuality] = useState(null);
+      const [qualityLoading, setQualityLoading] = useState(false);
+      const [qualityTest, setQualityTest] = useState(null);
+      const [qualityTesting, setQualityTesting] = useState(false);
       const [query, setQuery] = useState('');
       const [results, setResults] = useState(null);
       const [searching, setSearching] = useState(false);
@@ -1365,6 +1556,54 @@ window.__ModuleLoader__.load({
         const timer = setInterval(() => loadUsage(usagePeriod), 15000);
         return () => clearInterval(timer);
       }, [view, usagePeriod, data?.running, data?.bank, loadUsage]);
+
+      const loadQuality = useCallback(async () => {
+        setQualityLoading(true);
+        try {
+          const res = await fetch(`${API}/recall-quality`, { cache: 'no-store' });
+          const body = await res.json().catch(() => ({}));
+          if (!alive.current) return;
+          if (res.status === 404) {
+            setExtrasMissing(true);
+            return;
+          }
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          setQuality(body);
+        } catch (error) {
+          if (alive.current) setQuality({ error: error.message ?? String(error) });
+        } finally {
+          if (alive.current) setQualityLoading(false);
+        }
+      }, []);
+
+      const runQualityTest = useCallback(async () => {
+        setQualityTesting(true);
+        setQualityTest(null);
+        try {
+          const res = await fetch(`${API}/recall-quality`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!alive.current) return;
+          if (!res.ok || body.ok === false) throw new Error(body.error ?? res.statusText);
+          setQualityTest(body);
+        } catch (error) {
+          if (alive.current) setQualityTest({ error: error.message ?? String(error) });
+        } finally {
+          if (alive.current) setQualityTesting(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        if (!data?.running) {
+          setQuality(null);
+          setQualityTest(null);
+          return;
+        }
+        loadQuality();
+      }, [data?.running, data?.bank, loadQuality]);
 
       const loadDocuments = useCallback(async () => {
         try {
@@ -2370,6 +2609,19 @@ window.__ModuleLoader__.load({
                     ),
                     extrasMissing ? null : h('div', { style: { fontSize: 10.5, color: C.text3, marginTop: 6 } }, t('probeHint')),
                   )
+                : null,
+
+              // retrieval quality
+              data?.running
+                ? h(RecallQualityCard, {
+                    t,
+                    running,
+                    quality,
+                    test: qualityTest,
+                    loading: qualityLoading,
+                    testing: qualityTesting,
+                    onTest: runQualityTest,
+                  })
                 : null,
 
               // bank settings
@@ -4782,7 +5034,7 @@ window.__ModuleLoader__.load({
       apply,
       // Render handles for the smoke test; the module loader only reads
       // name/inject/apply, so these are inert in the real host.
-      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout, CleanupPanel, ObservationHistory, UsagePanel },
+      __test: { GraphCanvas, GraphDrawer, focusLayout, fullLayout, CleanupPanel, ObservationHistory, UsagePanel, RecallQualityCard },
     };
   },
 });
