@@ -289,6 +289,11 @@ window.__ModuleLoader__.load({
       usageTruncated: '（仅统计最近 500 次调用）',
       usageNoTokens: '无 token 记录',
       usageFree: '本地向量与重排不消耗 token',
+      usageCost: '花费（估）',
+      usageCostHint: '按 DeepSeek 价目估算，已区分空闲/高峰',
+      usageCostEstimated: '部分调用缺单价，为下限',
+      usagePriceNote:
+        '价目：输入 ¥1 / ¥2（空闲/高峰）每百万，缓存命中 ¥0.02 / ¥0.04，输出 ¥4 / ¥8；高峰为北京时间工作日 9:00–12:00、14:00–18:00。',
     };
 
     const en = {
@@ -560,6 +565,11 @@ window.__ModuleLoader__.load({
       usageTruncated: ' (latest 500 calls only)',
       usageNoTokens: 'no token record',
       usageFree: 'Local embeddings and rerank cost no tokens',
+      usageCost: 'Cost (est.)',
+      usageCostHint: 'Estimated from DeepSeek list prices, peak/idle included',
+      usageCostEstimated: 'lower bound — some calls had no price',
+      usagePriceNote:
+        'Prices: input ¥1 / ¥2 per million (idle/peak), cache hit ¥0.02 / ¥0.04, output ¥4 / ¥8; peak is Beijing time, weekdays 09:00–12:00 and 14:00–18:00.',
     };
 
     /** Locale tables, also used when the host injects no translator. */
@@ -916,6 +926,8 @@ window.__ModuleLoader__.load({
       const buckets = Array.isArray(usage?.buckets) ? usage.buckets : [];
       const peak = buckets.reduce((max, bucket) => Math.max(max, Number(bucket?.tokens?.total ?? 0)), 0) || 1;
       const labelEvery = Math.max(1, Math.ceil(buckets.length / 8));
+      const money = (value) =>
+        typeof value === 'number' && Number.isFinite(value) ? `¥${value >= 0.01 ? value.toFixed(2) : value.toFixed(4)}` : '—';
       const split = (title, rows) =>
         h(
           'div',
@@ -940,6 +952,11 @@ window.__ModuleLoader__.load({
                     'span',
                     { style: { color: C.text, fontVariantNumeric: 'tabular-nums', minWidth: 68, textAlign: 'right' } },
                     fmt(row.total),
+                  ),
+                  h(
+                    'span',
+                    { style: { color: C.text3, fontVariantNumeric: 'tabular-nums', minWidth: 58, textAlign: 'right' } },
+                    row.cost === null || row.cost === undefined ? '—' : money(row.cost),
                   ),
                 ),
               ),
@@ -996,9 +1013,16 @@ window.__ModuleLoader__.load({
                     figure(
                       t('usageToday'),
                       fmt(usage?.today?.total ?? 0),
-                      `${fmt(usage?.today?.calls ?? 0)} ${t('usageCalls')}`,
+                      usage?.today?.cost === null || usage?.today?.cost === undefined
+                        ? `${fmt(usage?.today?.calls ?? 0)} ${t('usageCalls')}`
+                        : `${fmt(usage?.today?.calls ?? 0)} ${t('usageCalls')} · ${money(usage.today.cost)}`,
                     ),
                     figure(t('usageRange'), fmt(totals?.total ?? 0), `${fmt(totals?.calls ?? 0)} ${t('usageCalls')}`),
+                    figure(
+                      t('usageCost'),
+                      money(totals?.cost),
+                      totals?.costEstimated ? t('usageCostEstimated') : t('usageCostHint'),
+                    ),
                     figure(t('usageInput'), fmt(totals?.input ?? 0)),
                     figure(t('usageOutput'), fmt(totals?.output ?? 0)),
                     figure(t('usageCached'), fmt(totals?.cached ?? 0)),
@@ -1010,40 +1034,59 @@ window.__ModuleLoader__.load({
                         'div',
                         null,
                         h('div', { style: { fontSize: 11, color: C.text3, marginBottom: 6 } }, t('usageTrend')),
+                        // Fixed column width: a quiet week stays a few slim bars
+                        // instead of one bar stretched across the page.
                         h(
                           'div',
-                          { style: { display: 'flex', alignItems: 'flex-end', gap: 4, height: 88 } },
-                          buckets.map((bucket) =>
+                          { style: { overflowX: 'auto', paddingBottom: 2 } },
+                          h(
+                            'div',
+                            { style: { display: 'inline-block' } },
                             h(
                               'div',
-                              {
-                                key: bucket.date,
-                                title: `${bucket.date} · ${fmt(bucket.tokens?.total ?? 0)} tokens · ${bucket.calls} ${t('usageCalls')}`,
-                                style: { flex: 1, minWidth: 5, display: 'flex', alignItems: 'flex-end', height: '100%' },
-                              },
-                              h('div', {
-                                style: {
-                                  width: '100%',
-                                  height: `${Math.max(2, Math.round((Number(bucket.tokens?.total ?? 0) / peak) * 84))}px`,
-                                  background: C.btnFill,
-                                  opacity: 0.75,
-                                  borderRadius: '3px 3px 0 0',
-                                },
-                              }),
+                              { style: { display: 'flex', alignItems: 'flex-end', gap: 6, height: 92 } },
+                              buckets.map((bucket) =>
+                                h(
+                                  'div',
+                                  {
+                                    key: bucket.date,
+                                    title: `${bucket.date} · ${fmt(bucket.tokens?.total ?? 0)} tokens${
+                                      typeof bucket.cost === 'number' ? ` · ${money(bucket.cost)}` : ''
+                                    } · ${bucket.calls} ${t('usageCalls')}`,
+                                    style: { flex: 'none', width: 20, height: '100%', display: 'flex', alignItems: 'flex-end' },
+                                  },
+                                  h('div', {
+                                    style: {
+                                      width: '100%',
+                                      height: `${Math.max(2, Math.round((Number(bucket.tokens?.total ?? 0) / peak) * 88))}px`,
+                                      background: C.btnFill,
+                                      opacity: 0.75,
+                                      borderRadius: '3px 3px 0 0',
+                                    },
+                                  }),
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                        h(
-                          'div',
-                          { style: { display: 'flex', gap: 4, marginTop: 4 } },
-                          buckets.map((bucket, index) =>
                             h(
                               'div',
-                              {
-                                key: bucket.date,
-                                style: { flex: 1, minWidth: 5, textAlign: 'center', fontSize: 9.5, color: C.text3, overflow: 'hidden' },
-                              },
-                              index % labelEvery === 0 ? bucket.date.slice(5) : '',
+                              { style: { display: 'flex', gap: 6, marginTop: 4 } },
+                              buckets.map((bucket, index) =>
+                                h(
+                                  'div',
+                                  {
+                                    key: bucket.date,
+                                    style: {
+                                      flex: 'none',
+                                      width: 20,
+                                      textAlign: 'center',
+                                      fontSize: 9.5,
+                                      color: C.text3,
+                                      whiteSpace: 'nowrap',
+                                    },
+                                  },
+                                  index % labelEvery === 0 ? bucket.date.slice(5) : '',
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -1109,10 +1152,22 @@ window.__ModuleLoader__.load({
                               { style: { color: C.text, fontVariantNumeric: 'tabular-nums', flex: 'none', minWidth: 104, textAlign: 'right' } },
                               call.total > 0 ? `${fmt(call.input)} → ${fmt(call.output)}` : t('usageNoTokens'),
                             ),
+                            h(
+                              'span',
+                              {
+                                style: { color: C.text3, fontVariantNumeric: 'tabular-nums', flex: 'none', minWidth: 64, textAlign: 'right' },
+                              },
+                              call.cost === null || call.cost === undefined ? '—' : money(call.cost),
+                            ),
                           ),
                         ),
                   ),
-                  h('div', { style: { fontSize: 10.5, color: C.text3 } }, t('usageFree')),
+                  h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+                    h('div', { style: { fontSize: 10.5, color: C.text3 } }, t('usagePriceNote')),
+                    h('div', { style: { fontSize: 10.5, color: C.text3 } }, t('usageFree')),
+                  ),
                 ),
       );
     }

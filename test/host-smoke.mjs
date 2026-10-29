@@ -356,6 +356,10 @@ if (usageCall) {
     if (!Array.isArray(body.byModel)) note('usage payload has no byModel array');
     if (!Array.isArray(body.recent)) note('usage payload has no recent array');
     if (typeof body.period !== 'string') note('usage payload has no period');
+    if (!('cost' in (body.totals ?? {}))) note('usage totals has no cost field');
+    if (typeof body.totals?.costEstimated !== 'boolean') note('usage totals has no costEstimated flag');
+    if (!body.pricing || typeof body.pricing !== 'object') note('usage payload has no price table');
+    if (!('cost' in (body.today ?? {}))) note('usage today has no cost field');
   } else if (usageCall.status === 500) {
     if (body.ok !== false) note('usage failure body is not ok:false');
   } else {

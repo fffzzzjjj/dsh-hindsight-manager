@@ -312,15 +312,15 @@ if (typeof handles.UsagePanel !== 'function') {
       onChangePeriod() {},
       onRefresh() {},
       usage: {
-        totals: { calls: 9, input: 1000, output: 234, cached: 500, thoughts: 0, total: 1234 },
-        today: { calls: 2, input: 300, output: 0, cached: 0, thoughts: 0, total: 300 },
+        totals: { calls: 9, input: 1000, output: 234, cached: 500, thoughts: 0, total: 1234, cost: 0.4231, pricedCalls: 9 },
+        today: { calls: 2, input: 300, output: 0, cached: 0, thoughts: 0, total: 300, cost: 0.12 },
         buckets: [
-          { date: '2026-10-27', calls: 3, tokens: { total: 400 } },
-          { date: '2026-10-28', calls: 4, tokens: { total: 430 } },
-          { date: '2026-10-29', calls: 2, tokens: { total: 404 } },
+          { date: '2026-10-27', calls: 3, tokens: { total: 400 }, cost: 0.1 },
+          { date: '2026-10-28', calls: 4, tokens: { total: 430 }, cost: 0.2 },
+          { date: '2026-10-29', calls: 2, tokens: { total: 404 }, cost: 0.12 },
         ],
-        byOperation: [{ key: 'retain', calls: 5, total: 900 }],
-        byModel: [{ key: 'deepseek-flash', calls: 9, total: 1234 }],
+        byOperation: [{ key: 'retain', calls: 5, total: 900, cost: 0.3 }],
+        byModel: [{ key: 'deepseek-flash', calls: 9, total: 1234, cost: 0.42 }],
         recent: [
           {
             at: '2026-10-29T10:00:00Z',
@@ -332,6 +332,7 @@ if (typeof handles.UsagePanel !== 'function') {
             output: 100,
             cached: 0,
             total: 900,
+            cost: 0.0009,
           },
         ],
         sampled: 9,
@@ -354,6 +355,16 @@ if (typeof handles.UsagePanel !== 'function') {
     if (!texts.includes('1,234')) note('usage panel does not show the range total');
     if (!texts.includes('300')) note('usage panel does not show today’s total');
     if (!texts.includes('retain')) note('usage panel does not list the operation split');
+    if (!texts.includes('¥0.42')) note('usage panel does not show the estimated cost');
+    // Column width, not flex: three days must not stretch across the page.
+    let fixedColumns = 0;
+    (function walk(node) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (node.props?.style?.width === 20 && node.props?.style?.flex === 'none') fixedColumns += 1;
+      (node.children ?? []).forEach(walk);
+    })(tree);
+    if (fixedColumns !== 6) note(`usage chart drew ${fixedColumns} fixed columns, expected 6 (3 bars + 3 labels)`);
   } catch (error) {
     note(`UsagePanel threw: ${error.stack?.split('\n').slice(0, 3).join(' | ')}`);
   }

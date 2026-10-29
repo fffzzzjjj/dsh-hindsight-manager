@@ -1384,6 +1384,48 @@ export function apply(ctx) {
   }
 
   /**
+   * CNY per million tokens, from DeepSeek's published price list.
+   *
+   * Peak hours cost double: Beijing time, Monday–Friday 09:00–12:00 and
+   * 14:00–18:00, holidays excluded. Everything else is the idle price.
+   */
+  const PRICES = {
+    'deepseek-flash': { missIdle: 1, missPeak: 2, hitIdle: 0.02, hitPeak: 0.04, outIdle: 4, outPeak: 8 },
+    'deepseek-v4-pro': { missIdle: 4.5, missPeak: 9, hitIdle: 0.15, hitPeak: 0.3, outIdle: 13.5, outPeak: 27 },
+  };
+
+  /** Whether a moment falls in DeepSeek's peak window, read in local time. */
+  function isPeakHour(iso) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return false;
+    const weekday = date.getDay();
+    if (weekday === 0 || weekday === 6) return false;
+    const minutes = date.getHours() * 60 + date.getMinutes();
+    return (minutes >= 9 * 60 && minutes < 12 * 60) || (minutes >= 14 * 60 && minutes < 18 * 60);
+  }
+
+  /** Cost of one call in CNY, or null when this model has no price entry. */
+  function callCost(model, input, cached, output, at) {
+    const price = PRICES[model];
+    if (!price) return null;
+    const peak = isPeakHour(at);
+    const hit = Math.max(0, Math.min(cached, input));
+    const miss = Math.max(0, input - hit);
+    return (
+      (miss * (peak ? price.missPeak : price.missIdle) +
+        hit * (peak ? price.hitPeak : price.hitIdle) +
+        output * (peak ? price.outPeak : price.outIdle)) /
+      1e6
+    );
+  }
+
+  /** Rounding that keeps a fraction of a fen visible. */
+  function roundCost(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return value >= 0.01 ? Math.round(value * 100) / 100 : Math.round(value * 10000) / 10000;
+  }
+
+  /**
    * Token usage for one bank.
    *
    * The daemon already records every model call and buckets the tokens by day,
@@ -1402,17 +1444,29 @@ export function apply(ctx) {
       GRAPH_TIMEOUT_MS,
     );
 
-    // A page of calls is enough to name the big spenders; capped at the API's
-    // own limit, and the count says so when it was hit.
-    let list = null;
-    try {
-      list = await fetchJson(
-        bankUrl(bank, `/llm-requests?limit=500&call_type=llm&start_date=${encodeURIComponent(since)}`),
-        undefined,
-        GRAPH_TIMEOUT_MS,
-      );
-    } catch {
-      // The trend above is already useful; the split is a bonus.
+    // Calls carry the only per-call timestamps, and with them the peak/idle
+    // price split. Paged up to three times (the API caps a page at 500); past
+    // that the trend above still stands and the cost is marked as a sample.
+    const items = [];
+    let callTotal = 0;
+    for (let page = 0; page < 3; page += 1) {
+      let chunk;
+      try {
+        chunk = await fetchJson(
+          bankUrl(
+            bank,
+            `/llm-requests?limit=500&offset=${items.length}&call_type=llm&start_date=${encodeURIComponent(since)}`,
+          ),
+          undefined,
+          GRAPH_TIMEOUT_MS,
+        );
+      } catch {
+        break;
+      }
+      const batch = Array.isArray(chunk?.items) ? chunk.items : [];
+      callTotal = Number(chunk?.total ?? callTotal ?? batch.length);
+      items.push(...batch);
+      if (batch.length === 0 || items.length >= callTotal) break;
     }
 
     const rawBuckets = Array.isArray(stats?.buckets) ? stats.buckets : [];
@@ -1434,24 +1488,51 @@ export function apply(ctx) {
       if (row.date !== '') buckets.push(row);
     }
 
-    const items = Array.isArray(list?.items) ? list.items : [];
     const split = (keyOf) => {
       const map = new Map();
       for (const item of items) {
         const key = keyOf(item);
-        const entry = map.get(key) ?? { key, calls: 0, ...emptyTokens() };
+        const entry = map.get(key) ?? { key, calls: 0, cost: 0, priced: false, ...emptyTokens() };
         const input = Number(item?.input_tokens ?? 0);
         const output = Number(item?.output_tokens ?? 0);
+        const cached = Number(item?.cached_tokens ?? 0);
         entry.calls += 1;
         entry.input += input;
         entry.output += output;
-        entry.cached += Number(item?.cached_tokens ?? 0);
+        entry.cached += cached;
         entry.thoughts += Number(item?.thoughts_tokens ?? 0);
         entry.total += Number(item?.total_tokens ?? input + output);
+        const cost = callCost(item?.model, input, cached, output, item?.started_at);
+        if (cost !== null) {
+          entry.cost += cost;
+          entry.priced = true;
+        }
         map.set(key, entry);
       }
-      return [...map.values()].sort((a, b) => b.total - a.total).slice(0, 8);
+      return [...map.values()]
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 8)
+        .map((entry) => ({ ...entry, cost: entry.priced ? roundCost(entry.cost) : null }));
     };
+
+    // Cost per local day, so each bar can explain itself on hover.
+    const costByDay = new Map();
+    let costTotal = 0;
+    let pricedCalls = 0;
+    for (const item of items) {
+      const cost = callCost(
+        item?.model,
+        Number(item?.input_tokens ?? 0),
+        Number(item?.cached_tokens ?? 0),
+        Number(item?.output_tokens ?? 0),
+        item?.started_at,
+      );
+      if (cost === null) continue;
+      pricedCalls += 1;
+      costTotal += cost;
+      const day = localDay(item?.started_at ?? '');
+      if (day !== '') costByDay.set(day, (costByDay.get(day) ?? 0) + cost);
+    }
 
     const recent = items
       .slice()
@@ -1460,6 +1541,9 @@ export function apply(ctx) {
       .map((item) => {
         const input = Number(item?.input_tokens ?? 0);
         const output = Number(item?.output_tokens ?? 0);
+        const cached = Number(item?.cached_tokens ?? 0);
+        const total = Number(item?.total_tokens ?? input + output);
+        const cost = callCost(item?.model, input, cached, output, item?.started_at);
         return {
           at: item?.started_at ?? null,
           operation: String(item?.operation ?? 'other'),
@@ -1468,19 +1552,30 @@ export function apply(ctx) {
           status: String(item?.status ?? 'unknown'),
           input,
           output,
-          cached: Number(item?.cached_tokens ?? 0),
-          total: Number(item?.total_tokens ?? input + output),
+          cached,
+          total,
+          cost: cost === null ? null : roundCost(cost),
         };
       });
+
+    for (const bucket of buckets) {
+      const cost = costByDay.get(bucket.date);
+      bucket.cost = typeof cost === 'number' ? roundCost(cost) : null;
+    }
 
     const todayKey = localDay(new Date().toISOString());
     const today = emptyTokens();
     let todayCalls = 0;
+    let todayCost = null;
     for (const bucket of buckets) {
       if (bucket.date !== todayKey) continue;
       todayCalls += bucket.calls;
       for (const key of ['input', 'output', 'cached', 'thoughts', 'total']) today[key] += bucket.tokens[key];
+      if (typeof bucket.cost === 'number') todayCost = bucket.cost;
     }
+
+    const costsKnown = pricedCalls > 0;
+    const costEstimated = costsKnown && items.length < callTotal;
 
     return {
       ok: true,
@@ -1488,14 +1583,22 @@ export function apply(ctx) {
       period,
       generatedAt: new Date().toISOString(),
       windowStart: since,
-      totals: { calls, ...totals },
-      today: { calls: todayCalls, ...today },
+      totals: {
+        calls,
+        ...totals,
+        cost: costsKnown ? roundCost(costTotal) : null,
+        costEstimated,
+        pricedCalls,
+      },
+      today: { calls: todayCalls, ...today, cost: todayCost },
       buckets,
       byOperation: split((item) => String(item?.operation ?? 'other')),
       byModel: split((item) => String(item?.model ?? 'unknown')),
       recent,
       sampled: items.length,
-      truncated: items.length >= 500,
+      callTotal,
+      truncated: items.length < callTotal,
+      pricing: PRICES,
     };
   }
 
