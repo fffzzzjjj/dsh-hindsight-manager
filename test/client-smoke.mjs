@@ -434,6 +434,13 @@ if (typeof handles.ObservationHistory !== 'function') {
   }
 }
 
+// ── recall self-test panel is wired into the bundle ────────────────────────
+// It uses hooks, so it cannot be called outside a renderer; the host test
+// exercises the behaviour and this asserts the export still exists.
+if (typeof handles.RecallEvalPanel !== 'function') {
+  note('RecallEvalPanel is not exported for the test');
+}
+
 // ── cleanup stale list exposes observation history ─────────────────────────
 if (typeof handles.CleanupPanel === 'function') {
   try {

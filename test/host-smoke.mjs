@@ -4,8 +4,8 @@
 //
 // It imports index.js, calls apply() with a recording ctx, then invokes every
 // registered route handler against a fake request/response pair. The point is to
-// catch module-evaluation and handler-time faults — a variable used before its
-// declaration, a shadowed helper, a thrown exception on an empty body — before
+// catch module-evaluation and handler-time faults 鈥?a variable used before its
+// declaration, a shadowed helper, a thrown exception on an empty body 鈥?before
 // they reach a running Harness, where they surface only as a broken page.
 //
 // Side effects are contained: DSH_HOME points at a temporary directory (so the
@@ -131,6 +131,7 @@ const expected = [
   '/hindsight-manager/api/cleanup',
   '/hindsight-manager/api/usage',
   '/hindsight-manager/api/recall-quality',
+  '/hindsight-manager/api/recall-eval',
   '/hindsight-manager/api/update',
   '/hindsight-manager/api/memories/action',
   '/hindsight-manager/api/health/probe',
@@ -140,7 +141,7 @@ const expected = [
 ];
 for (const path of expected) if (!routes.has(path)) note(`missing route: ${path}`);
 
-// ── setup: the guided checklist answers without a daemon or integration ──────
+// 鈹€鈹€ setup: the guided checklist answers without a daemon or integration 鈹€鈹€鈹€鈹€鈹€鈹€
 const setupGet = await call('/hindsight-manager/api/setup', { method: 'GET' });
 if (setupGet) {
   if (setupGet.status !== 200) note(`setup GET status = ${setupGet.status} (${setupGet.body})`);
@@ -165,7 +166,7 @@ const keyBad = await call('/hindsight-manager/api/setup', {
 });
 if (keyBad && keyBad.status !== 400) note(`setup short key status = ${keyBad.status}`);
 
-// A valid key must land in the profile env file — this is the path that threw
+// A valid key must land in the profile env file 鈥?this is the path that threw
 // "mkdirSync is not defined" when the import went missing.
 const keyOk = await call('/hindsight-manager/api/setup', {
   method: 'POST',
@@ -181,7 +182,7 @@ if (keyOk) {
   }
 }
 
-// ── overview: must answer whether or not a daemon is listening ───────────────
+// 鈹€鈹€ overview: must answer whether or not a daemon is listening 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const overview = await call('/hindsight-manager/api/overview');
 if (overview) {
   if (overview.status !== 200) note(`overview status = ${overview.status} (${overview.body})`);
@@ -195,7 +196,7 @@ if (overview) {
   if (!body.config || typeof body.config.autoStart !== 'boolean') note('overview has no config');
 }
 
-// ── config: read, reject bad input, accept a patch ───────────────────────────
+// 鈹€鈹€ config: read, reject bad input, accept a patch 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const configGet = await call('/hindsight-manager/api/config', { method: 'GET' });
 if (configGet && (configGet.status !== 200 || configGet.json?.ok !== true)) {
   note(`config GET status = ${configGet.status} (${configGet.body})`);
@@ -245,7 +246,7 @@ if (configToggleBad && configToggleBad.status !== 400) {
   note(`config toggle wrong type status = ${configToggleBad.status}`);
 }
 
-// ── banks: a list and a selected value, or a reported failure ────────────────
+// 鈹€鈹€ banks: a list and a selected value, or a reported failure 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const banksCall = await call('/hindsight-manager/api/banks');
 if (banksCall) {
   const body = banksCall.json ?? {};
@@ -275,7 +276,7 @@ if (bankOk) {
   if (written.bank !== 'coding-agent::DSH') note(`config bank not persisted: ${JSON.stringify(written)}`);
 }
 
-// ── bank health and per-bank settings ────────────────────────────────────────
+// 鈹€鈹€ bank health and per-bank settings 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const healthCall = await call('/hindsight-manager/api/health');
 if (healthCall) {
   if (healthCall.status === 200) {
@@ -350,7 +351,7 @@ if (budgetOk) {
   if (written.searchBudget !== 'high') note(`searchBudget not persisted: ${JSON.stringify(written)}`);
 }
 
-// ── cleanup scan and bulk actions ───────────────────────────────────────────
+// 鈹€鈹€ cleanup scan and bulk actions 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const cleanupCall = await call('/hindsight-manager/api/cleanup?staleDays=90&scan=200');
 if (cleanupCall) {
   if (cleanupCall.status === 200) {
@@ -364,7 +365,7 @@ if (cleanupCall) {
   }
 }
 
-// ── usage: a token report, or a reported failure — never a thrown handler ──
+// 鈹€鈹€ usage: a token report, or a reported failure 鈥?never a thrown handler 鈹€鈹€
 const usageCall = await call('/hindsight-manager/api/usage?period=7d');
 if (usageCall) {
   const body = usageCall.json ?? {};
@@ -405,7 +406,7 @@ if (usageDay && usageDay.status === 200) {
   note(`usage 1d status = ${usageDay.status}`);
 }
 
-// ── retrieval quality: the models in use, or a reported failure ────────────
+// 鈹€鈹€ retrieval quality: the models in use, or a reported failure 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const qualityCall = await call('/hindsight-manager/api/recall-quality');
 if (qualityCall) {
   if (qualityCall.status === 200) {
@@ -433,6 +434,46 @@ if (qualityProbe) {
   }
 }
 
+// 鈹€鈹€ recall self-test: saved exam, saved baseline, one real run 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+const evalGet = await call('/hindsight-manager/api/recall-eval');
+if (evalGet) {
+  if (evalGet.status !== 200) note(`recall-eval GET status = ${evalGet.status}`);
+  else if (!Array.isArray(evalGet.json?.manual)) note('recall-eval GET has no manual array');
+}
+
+const evalSave = await call('/hindsight-manager/api/recall-eval', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'save-manual', questions: [{ q: '娴嬭瘯闂', expect: '娴嬭瘯' }] }),
+});
+if (evalSave) {
+  if (evalSave.status !== 200) note(`recall-eval save status = ${evalSave.status}`);
+  else if (!Array.isArray(evalSave.json?.manual) || evalSave.json.manual.length !== 1) {
+    note('recall-eval did not persist the manual exam');
+  }
+}
+
+const evalRun = await call('/hindsight-manager/api/recall-eval', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'run', mode: 'manual', questions: [{ q: '娴嬭瘯闂', expect: '娴嬭瘯' }] }),
+});
+if (evalRun) {
+  if (evalRun.status === 200) {
+    const body = evalRun.json ?? {};
+    if (typeof body.recall3 !== 'number') note('recall-eval run has no recall3');
+    if (!Array.isArray(body.rows)) note('recall-eval run has no rows');
+  } else if (evalRun.status !== 400 && evalRun.status !== 500) {
+    note(`recall-eval run status = ${evalRun.status}`);
+  }
+}
+
+const evalBaseline = await call('/hindsight-manager/api/recall-eval', {
+  method: 'POST',
+  body: JSON.stringify({ action: 'baseline' }),
+});
+if (evalBaseline && ![200, 400].includes(evalBaseline.status)) {
+  note(`recall-eval baseline status = ${evalBaseline.status}`);
+}
+
 const actionUnknown = await call('/hindsight-manager/api/memories/action', {
   method: 'POST',
   body: JSON.stringify({ action: 'nuke', ids: ['x'] }),
@@ -454,7 +495,7 @@ if (actionEmpty && actionEmpty.status !== 400) note(`action empty ids status = $
 const historyNoId = await call('/hindsight-manager/api/memory/history');
 if (historyNoId && historyNoId.status !== 400) note(`history without id status = ${historyNoId.status}`);
 
-// ── update check reports a version or a network failure ─────────────────────
+// 鈹€鈹€ update check reports a version or a network failure 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const updateCall = await call('/hindsight-manager/api/update');
 if (updateCall) {
   if (updateCall.status === 200) {
@@ -467,18 +508,18 @@ if (updateCall) {
   }
 }
 
-// ── search: an empty query is a client error, not a crash ────────────────────
+// 鈹€鈹€ search: an empty query is a client error, not a crash 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const searchEmpty = await call('/hindsight-manager/api/search', { method: 'POST', body: JSON.stringify({}) });
 if (searchEmpty && searchEmpty.status !== 400) note(`search empty query status = ${searchEmpty.status}`);
 
-// ── documents: answers or reports, never throws ──────────────────────────────
+// 鈹€鈹€ documents: answers or reports, never throws 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const documents = await call('/hindsight-manager/api/documents?limit=3');
 if (documents) {
   if (![200, 404, 500].includes(documents.status)) note(`documents status = ${documents.status}`);
   if (documents.json === null) note(`documents body is not JSON: ${documents.body}`);
 }
 
-// ── graph: a valid payload, or a reported failure — never a thrown handler ───
+// 鈹€鈹€ graph: a valid payload, or a reported failure 鈥?never a thrown handler 鈹€鈹€鈹€
 const graph = await call('/hindsight-manager/api/graph');
 if (graph) {
   const body = graph.json ?? {};
@@ -500,7 +541,7 @@ if (graph) {
 const entityNoId = await call('/hindsight-manager/api/entity');
 if (entityNoId && entityNoId.status !== 400) note(`entity without id status = ${entityNoId.status}`);
 
-// ── daemon: an unknown action is rejected without touching anything ──────────
+// 鈹€鈹€ daemon: an unknown action is rejected without touching anything 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const daemonBad = await call('/hindsight-manager/api/daemon', {
   method: 'POST',
   body: JSON.stringify({ action: 'restart' }),
@@ -517,3 +558,4 @@ if (problems.length > 0) {
   console.log(`OK: apply registered ${routes.size} routes and every handler answered without throwing`);
   console.log(`   routes: ${[...routes.keys()].join(', ')}`);
 }
+
