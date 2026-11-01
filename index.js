@@ -1681,18 +1681,37 @@ export function apply(ctx) {
     return { embedding, rerank };
   }
 
-  /** Vector size, read from the downloaded model's own config.json. */
+  /** Vector size, read from the model's own config.json. */
   async function modelDimension(model) {
     if (typeof model !== 'string' || model === '') return null;
-    const root = join(hindsightHome(), 'hf-models', 'hub', `models--${model.replace(/\//g, '--')}`, 'snapshots');
+    const readSize = async (file) => {
+      const parsed = JSON.parse(await readFile(file, 'utf8'));
+      const size = Number(parsed?.hidden_size ?? parsed?.dim ?? 0);
+      return Number.isInteger(size) && size > 0 ? size : null;
+    };
+    // A local directory is used as-is; a repo id is looked up in the HF cache,
+    // which the plugin may have relocated under the configured cache directory.
+    const candidates = resolve(model);
     try {
-      for (const snapshot of await readdir(root)) {
-        const parsed = JSON.parse(await readFile(join(root, snapshot, 'config.json'), 'utf8'));
-        const size = Number(parsed?.hidden_size ?? parsed?.dim ?? 0);
-        if (Number.isInteger(size) && size > 0) return size;
-      }
+      if (existsSync(candidates)) return await readSize(join(candidates, 'config.json'));
     } catch {
-      // Not downloaded locally, or no config: "unknown" is a fine answer.
+      // fall through to the cache lookup
+    }
+    const roots = [join(hindsightHome(), 'hf-models', 'hub')];
+    const config = readJsonFile(join(hindsightHome(), 'storages', 'dsh-hindsight-manager', 'config.json'));
+    if (typeof config?.installDir === 'string' && config.installDir.trim() !== '') {
+      roots.unshift(join(config.installDir, 'hf-models', 'hub'));
+    }
+    for (const hub of roots) {
+      const root = join(hub, `models--${model.replace(/\//g, '--')}`, 'snapshots');
+      try {
+        for (const snapshot of await readdir(root)) {
+          const size = await readSize(join(root, snapshot, 'config.json'));
+          if (size !== null) return size;
+        }
+      } catch {
+        // try the next root
+      }
     }
     return null;
   }
