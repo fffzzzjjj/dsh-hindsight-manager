@@ -319,15 +319,10 @@ window.__ModuleLoader__.load({
       qualityWarnSaturated: '重排分数高度集中（区间 {spread}），排序几乎没有区分度。',
       qualityWarnSparse: '这次命中没有一条来自语义或关键词臂，结果全是图谱/时间臂给的。',
       recallEvalTitle: '召回自测',
-      recallEvalHint: '问题从本库现场生成，只有本库的成绩才有意义',
-      recallEvalManual: '手动考卷',
-      recallEvalAuto: '自动出题',
+      recallEvalHint: '问题由你自己写，测的是这个库能不能找到你关心的东西',
       recallEvalQuestions: '个问题',
-      recallEvalGenerate: '出题并运行',
       recallEvalRun: '运行',
       recallEvalRunning: '运行中…',
-      recallEvalAutoHint:
-        '从库里随机抽记忆，用抽取模型改写成问句（避开编号、型号、数字），再查能不能找回原记忆。约 1k tokens/题。',
       recallEvalQPlaceholder: '问题，例如：流化床为什么会弹回',
       recallEvalExpectPlaceholder: '期望关键词（可留空）',
       recallEvalAdd: '添加一行',
@@ -336,7 +331,7 @@ window.__ModuleLoader__.load({
       recallEvalBaseline: '存为基线',
       recallEvalVsBaseline: '较基线',
       recallEvalMiss: '未命中',
-      recallEvalEmpty: '还没有跑过。手动填几道题，或切到自动出题。',
+      recallEvalEmpty: '还没有跑过。填几道题再运行。',
     };
 
     const en = {
@@ -638,15 +633,10 @@ window.__ModuleLoader__.load({
       qualityWarnSaturated: 'Rerank scores are tightly bunched (spread {spread}), so the ordering carries almost no signal.',
       qualityWarnSparse: 'No hit came from the semantic or keyword arm — every result came from graph/temporal ranking.',
       recallEvalTitle: 'Recall self-test',
-      recallEvalHint: 'Questions come from this bank, so only this bank’s score means anything',
-      recallEvalManual: 'Manual exam',
-      recallEvalAuto: 'Auto questions',
+      recallEvalHint: 'You write the questions; the score says whether this bank finds what you care about',
       recallEvalQuestions: 'questions',
-      recallEvalGenerate: 'Generate and run',
       recallEvalRun: 'Run',
       recallEvalRunning: 'Running…',
-      recallEvalAutoHint:
-        'Draws random memories, asks the extraction model to rewrite each as a question (avoiding identifiers and numbers), then checks whether the original comes back. ~1k tokens per question.',
       recallEvalQPlaceholder: 'Question, e.g. why does the fluid bed bounce back',
       recallEvalExpectPlaceholder: 'Expected keyword (optional)',
       recallEvalAdd: 'Add row',
@@ -655,7 +645,7 @@ window.__ModuleLoader__.load({
       recallEvalBaseline: 'Save as baseline',
       recallEvalVsBaseline: 'vs baseline',
       recallEvalMiss: 'miss',
-      recallEvalEmpty: 'Not run yet. Fill a few questions, or switch to auto questions.',
+      recallEvalEmpty: 'Not run yet. Fill a few questions and run.',
     };
 
     /** Locale tables, also used when the host injects no translator. */
@@ -1408,8 +1398,6 @@ window.__ModuleLoader__.load({
      * something for this bank and no other. Manual mode is the zero-cost way in.
      */
     function RecallEvalPanel({ t, running, store, busy, error, onRun, onSaveManual, onBaseline }) {
-      const [mode, setMode] = useState('manual');
-      const [count, setCount] = useState('10');
       const [rows, setRows] = useState([{ q: '', expect: '' }]);
 
       useEffect(() => {
@@ -1423,33 +1411,13 @@ window.__ModuleLoader__.load({
       const filled = rows.filter((row) => row.q.trim() !== '');
       const last = store?.last ?? null;
       const base = store?.baseline ?? null;
-      const comparable = base && last && base.mode === last.mode && base.count === last.count;
+      const comparable = base && last && base.count === last.count;
       const pct = (value) => `${Math.round((Number(value) || 0) * 100)}%`;
       const delta = (now, before) => {
         const diff = Math.round(((Number(now) || 0) - (Number(before) || 0)) * 100);
         if (diff === 0) return null;
         return `${diff > 0 ? '+' : ''}${diff}`;
       };
-
-      const pill = (value, label) =>
-        h(
-          'button',
-          {
-            type: 'button',
-            onClick: () => setMode(value),
-            style: {
-              appearance: 'none',
-              cursor: 'pointer',
-              borderRadius: 999,
-              padding: '3px 11px',
-              fontSize: 11.5,
-              border: `1px solid ${mode === value ? C.btnFill : C.border2}`,
-              background: mode === value ? 'rgba(36,123,191,0.16)' : 'transparent',
-              color: mode === value ? C.text : C.text3,
-            },
-          },
-          label,
-        );
 
       return h(
         Card,
@@ -1461,33 +1429,15 @@ window.__ModuleLoader__.load({
             right: h(
               'div',
               { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
-              pill('manual', t('recallEvalManual')),
-              pill('auto', t('recallEvalAuto')),
-              mode === 'auto'
-                ? h(
-                    'select',
-                    {
-                      value: count,
-                      onChange: (event) => setCount(event.target.value),
-                      style: { ...inputStyle, width: 92, flex: 'none', padding: '4px 8px' },
-                    },
-                    ['5', '10', '20'].map((value) => h('option', { key: value, value }, `${value} ${t('recallEvalQuestions')}`)),
-                  )
-                : null,
               h(
                 Button,
                 {
                   primary: true,
                   busy: busy,
-                  disabled: !running || (mode === 'manual' && filled.length === 0),
-                  onClick: () =>
-                    onRun(
-                      mode === 'manual'
-                        ? { mode: 'manual', questions: filled }
-                        : { mode: 'auto', count: Number(count) },
-                    ),
+                  disabled: !running || filled.length === 0,
+                  onClick: () => onRun({ questions: filled }),
                 },
-                busy ? t('recallEvalRunning') : mode === 'auto' ? t('recallEvalGenerate') : t('recallEvalRun'),
+                busy ? t('recallEvalRunning') : t('recallEvalRun'),
               ),
             ),
           },
@@ -1499,54 +1449,52 @@ window.__ModuleLoader__.load({
           : h(
               'div',
               { style: { display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 } },
-              mode === 'manual'
-                ? h(
+              h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+                rows.map((row, index) =>
+                  h(
                     'div',
-                    { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-                    rows.map((row, index) =>
-                      h(
-                        'div',
-                        { key: `row-${index}`, style: { display: 'flex', gap: 6, alignItems: 'center' } },
-                        h('input', {
-                          value: row.q,
-                          placeholder: t('recallEvalQPlaceholder'),
-                          onChange: (event) => update(index, { q: event.target.value }),
-                          style: { ...inputStyle, flex: 2 },
-                        }),
-                        h('input', {
-                          value: row.expect,
-                          placeholder: t('recallEvalExpectPlaceholder'),
-                          onChange: (event) => update(index, { expect: event.target.value }),
-                          style: { ...inputStyle, flex: 1 },
-                        }),
-                        h(
-                          'button',
-                          {
-                            type: 'button',
-                            onClick: () => setRows(rows.filter((_item, position) => position !== index)),
-                            style: {
-                              appearance: 'none',
-                              border: 'none',
-                              background: 'transparent',
-                              color: C.text3,
-                              cursor: 'pointer',
-                              fontSize: 14,
-                              padding: '0 4px',
-                            },
-                            title: t('recallEvalRemove'),
-                          },
-                          '×',
-                        ),
-                      ),
-                    ),
+                    { key: `row-${index}`, style: { display: 'flex', gap: 6, alignItems: 'center' } },
+                    h('input', {
+                      value: row.q,
+                      placeholder: t('recallEvalQPlaceholder'),
+                      onChange: (event) => update(index, { q: event.target.value }),
+                      style: { ...inputStyle, flex: 2 },
+                    }),
+                    h('input', {
+                      value: row.expect,
+                      placeholder: t('recallEvalExpectPlaceholder'),
+                      onChange: (event) => update(index, { expect: event.target.value }),
+                      style: { ...inputStyle, flex: 1 },
+                    }),
                     h(
-                      'div',
-                      { style: { display: 'flex', gap: 8, marginTop: 2 } },
-                      h(Button, { onClick: () => setRows([...rows, { q: '', expect: '' }]) }, t('recallEvalAdd')),
-                      h(Button, { onClick: () => onSaveManual(filled) }, t('recallEvalSave')),
+                      'button',
+                      {
+                        type: 'button',
+                        onClick: () => setRows(rows.filter((_item, position) => position !== index)),
+                        style: {
+                          appearance: 'none',
+                          border: 'none',
+                          background: 'transparent',
+                          color: C.text3,
+                          cursor: 'pointer',
+                          fontSize: 14,
+                          padding: '0 4px',
+                        },
+                        title: t('recallEvalRemove'),
+                      },
+                      '×',
                     ),
-                  )
-                : h('div', { style: { fontSize: 11.5, color: C.text3 } }, t('recallEvalAutoHint')),
+                  ),
+                ),
+                h(
+                  'div',
+                  { style: { display: 'flex', gap: 8, marginTop: 2 } },
+                  h(Button, { onClick: () => setRows([...rows, { q: '', expect: '' }]) }, t('recallEvalAdd')),
+                  h(Button, { onClick: () => onSaveManual(filled) }, t('recallEvalSave')),
+                ),
+              ),
 
               error ? h('div', { style: { fontSize: 12, color: C.err, wordBreak: 'break-word' } }, error) : null,
 
@@ -1560,7 +1508,7 @@ window.__ModuleLoader__.load({
                       h(
                         'span',
                         { style: { color: C.text3 } },
-                        `${last.mode === 'auto' ? t('recallEvalAuto') : t('recallEvalManual')} · ${last.count} ${t('recallEvalQuestions')}`,
+                        `${last.count} ${t('recallEvalQuestions')}`,
                       ),
                       h('span', { style: { color: C.text } }, `@1 ${pct(last.recall1)}`),
                       h('span', { style: { color: C.text } }, `@3 ${pct(last.recall3)}`),

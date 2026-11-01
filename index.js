@@ -1818,110 +1818,28 @@ export function apply(ctx) {
   }
 
   /**
-   * Turn one memory into a question a person might actually ask.
+   * Recall self-test over a hand-written exam.
    *
-   * The instruction not to repeat identifiers is the point: a question carrying
-   * "CPE14-M1BH-3GL" is answered by the keyword arm alone and measures nothing.
+   * The questions are the user's own, never generated from a memory: a question
+   * written out of the memory it is meant to retrieve tests paraphrase, not
+   * retrieval, and scores a bank against itself.
    */
-  async function generateEvalQuestion(ctx, text) {
-    const apiKey = await resolveApiKey(ctx);
-    if (!apiKey) throw new Error('需要模型密钥才能自动出题');
-    const base = (process.env.HINDSIGHT_API_LLM_BASE_URL?.trim() || 'https://api.deepseek.com').replace(/\/+$/, '');
-    const model = process.env.HINDSIGHT_API_LLM_MODEL?.trim() || DEFAULT_LLM_MODEL;
-    const body = await fetchJson(
-      `${base}/chat/completions`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json; charset=utf-8', authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model,
-          temperature: 0.3,
-          // deepseek-flash thinks by default and spends the whole budget on
-          // reasoning tokens, returning an empty answer; this call wants a line
-          // of text, not a chain of thought.
-          reasoning_effort: 'none',
-          max_tokens: 160,
-          messages: [
-            {
-              role: 'system',
-              content:
-                '你在为一个记忆检索系统出考卷。把给定的一条记忆改写成一句自然人会问的问题。要求：不要复述原文里的型号、编号、文件路径、日期和数字（例如不要写 CPE14-M1BH-3GL、93838、2026-10-29）；不要出现“记忆里”“上文”这类词；只输出问题本身。',
-            },
-            { role: 'user', content: String(text).slice(0, 1200) },
-          ],
-        }),
-      },
-      60_000,
-    );
-    const answer = body?.choices?.[0]?.message?.content ?? '';
-    const question = String(answer)
-      .trim()
-      .replace(/^["“]|["”]$/g, '')
-      .split('\n')[0]
-      .trim();
-    if (question === '') throw new Error('模型没有返回问题');
-    return { question, usage: body?.usage ?? null };
-  }
-
-  /** Which rank (1-based) the source memory landed at, or null when it missed. */
-  function evalRank(results, source) {
-    const targetSignature = source.text ? trigramSet(normalizeMemoryText(source.text)) : null;
-    for (const [index, result] of results.entries()) {
-      if (source.id && result?.id === source.id) return index + 1;
-      if (targetSignature) {
-        const signature = trigramSet(normalizeMemoryText(result?.text));
-        if (jaccard(targetSignature, signature) >= 0.8) return index + 1;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Recall self-test.
-   *
-   * Auto mode draws its questions from the bank itself — a fixed question list
-   * would only ever measure the bank it was written for. Each memory becomes a
-   * question that avoids its own identifiers, and the run checks whether that
-   * memory comes back in the top k.
-   */
-  async function runRecallEval(ctx, bank, options) {
-    const mode = options.mode === 'auto' ? 'auto' : 'manual';
-    const usage = { input: 0, output: 0 };
+  async function runRecallEval(bank, options) {
     const questions = [];
-
-    if (mode === 'auto') {
-      const count = Math.min(20, Math.max(3, Number(options.count) || 10));
-      const page = await fetchJson(bankUrl(bank, '/memories/list?limit=200&state=valid'), undefined, GRAPH_TIMEOUT_MS);
-      const pool = (page?.items ?? [])
-        .filter((item) => String(item?.text ?? '').length >= 40)
-        .sort((a, b) => String(a.id).localeCompare(String(b.id)));
-      if (pool.length === 0) throw new Error('库里的记忆太少，无法自动出题');
-      const span = Math.max(1, Math.min(count, pool.length));
-      const start = Math.floor(Math.random() * Math.max(1, pool.length - span + 1));
-      for (const memory of pool.slice(start, start + span)) {
-        const generated = await generateEvalQuestion(ctx, memory.text);
-        usage.input += Number(generated.usage?.prompt_tokens ?? 0);
-        usage.output += Number(generated.usage?.completion_tokens ?? 0);
-        questions.push({ q: generated.question, source: { id: memory.id, text: memory.text } });
-      }
-    } else {
-      const rows = Array.isArray(options.questions) ? options.questions : [];
-      for (const item of rows.slice(0, 10)) {
-        const q = String(item?.q ?? '').trim();
-        const expect = String(item?.expect ?? '').trim();
-        if (q !== '') questions.push({ q, source: expect === '' ? null : { text: expect } });
-      }
-      if (questions.length === 0) throw new Error('至少填一个问题和期望关键词');
+    for (const item of (Array.isArray(options.questions) ? options.questions : []).slice(0, 10)) {
+      const q = String(item?.q ?? '').trim();
+      const expect = String(item?.expect ?? '').trim();
+      if (q !== '') questions.push({ q, expect });
     }
+    if (questions.length === 0) throw new Error('至少填一个问题');
 
     const rows = [];
     for (const item of questions) {
       const { ms, results } = await recallOnce(bank, item.q);
       let rank = null;
-      if (mode === 'auto') rank = evalRank(results, item.source);
-      else if (item.source) {
-        const found = results.findIndex((result) => String(result?.text ?? '').includes(item.source.text));
-        rank = found === -1 ? null : found + 1;
+      if (item.expect !== '') {
+        const found = results.findIndex((result) => String(result?.text ?? '').includes(item.expect));
+        if (found !== -1) rank = found + 1;
       }
       rows.push({ q: item.q, rank, ms, n: results.length });
     }
@@ -1930,7 +1848,6 @@ export function apply(ctx) {
     const result = {
       ok: true,
       bank,
-      mode,
       at: new Date().toISOString(),
       count: rows.length,
       recall1: at(1),
@@ -1939,7 +1856,6 @@ export function apply(ctx) {
       avgMs: Math.round(rows.reduce((sum, row) => sum + row.ms, 0) / Math.max(1, rows.length)),
       maxMs: rows.reduce((max, row) => Math.max(max, row.ms), 0),
       rows,
-      usage: mode === 'auto' ? usage : null,
     };
     const store = await loadEvalStore();
     await saveEvalStore({ ...store, last: result });
@@ -2319,7 +2235,7 @@ export function apply(ctx) {
             json(res, 200, { ok: true, baseline: store.last });
             return;
           }
-          json(res, 200, await runRecallEval(ctx, bank, body));
+          json(res, 200, await runRecallEval(bank, body));
         } catch (error) {
           json(res, 400, { ok: false, error: error?.message ?? String(error) });
         }
